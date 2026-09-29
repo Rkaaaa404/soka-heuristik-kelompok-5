@@ -1,0 +1,5 @@
+What to do saat Demo 1?
+1. Jelaskan algoritma yang anda pilih. Gunakan slide kemarin sebagai alat bantu.
+2. Jalankan simulasi / play video hasil rekaman simulasi.
+3. Tunjukkan implementasi algoritma ke dosen.  
+4. Tunjukkan kesesuaian proposal project dengan setup simulasi.
