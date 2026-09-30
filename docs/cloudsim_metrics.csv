@@ -1,0 +1,13 @@
+Workload,Tasks,Makespan_s,TotalCost_USD,DI,Runtime_ms
+GoCJ (Real Trace),100,608.45,1.18,0.3054,11.75
+GoCJ (Real Trace),200,1071.45,1.18,0.1149,11.13
+GoCJ (Real Trace),500,2879.96,1.18,0.0615,30.09
+GoCJ (Real Trace),1000,5720.8,2.36,0.0349,53.2
+Synthetic Uniform,100,139.1,1.18,0.2597,6.41
+Synthetic Uniform,200,275.19,1.18,0.2181,13.9
+Synthetic Uniform,500,716.38,1.18,0.2184,27.7
+Synthetic Uniform,1000,1437.62,1.18,0.2515,55.16
+Synthetic Normal,100,143.08,1.18,0.2447,7.11
+Synthetic Normal,200,301.31,1.18,0.272,10.64
+Synthetic Normal,500,761.52,1.18,0.2749,28.31
+Synthetic Normal,1000,1528.78,1.18,0.2775,57.03
