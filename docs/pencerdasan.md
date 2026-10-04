@@ -15,6 +15,7 @@
 7. [Penjelasan 4 Metrik Evaluasi](#7-penjelasan-4-metrik-evaluasi)
 8. [Panduan Menjalankan Simulasi (Hands-On)](#8-panduan-menjalankan-simulasi-hands-on)
 9. [Bocoran Pertanyaan Dosen & Cara Menjawabnya (FAQ)](#9-bocoran-pertanyaan-dosen--cara-menjawabnya-faq)
+10. [Analisis Mendalam Hasil Simulasi CloudSim Plus](#10-analisis-mendalam-hasil-simulasi-cloudsim-plus)
 
 ---
 
@@ -250,3 +251,68 @@ Buka `python/kelompok_5_TOPSIS.ipynb` di VS Code atau Jupyter Lab, lalu pilih **
 ### ❓ Q5: "Apa bedanya hasil antara CloudSim Plus (Java) dan SimPy (Python)?"
 > **Jawaban:**  
 > *"Kedua simulasi memberikan tren performa yang sangat konsisten. Perbedaan minor hanya terletak pada overhead internal engine: CloudSim Plus menyertakan overhead model jaringan (transfer I/O bandwidth datacenter dan alokasi PE host), sedangkan SimPy berfokus pada discrete-event queueing murni. Validasi silang kedua engine ini membuktikan bahwa algoritma TOPSIS kami bersifat deterministik dan reliabel di platform mana pun."*
+
+---
+
+## 10. Analisis Mendalam Hasil Simulasi CloudSim Plus
+
+Bagian ini adalah **kunci analisis ilmiah** untuk menjawab pertanyaan dosen saat melihat angka-angka hasil simulasi dan grafik.
+
+### A. Tabel Data Hasil Eksekusi (`docs/cloudsim_metrics.csv`)
+
+| Workload | Tasks | Makespan (detik) | Total Cost ($) | Degree of Imbalance (DI) | Runtime (ms) |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **GoCJ (Real Trace)** | 100 | 609,16 | $1,18 | 0,2907 | 0,46 ms |
+| | 200 | 1.064,23 | $1,18 | 0,0681 | 1,90 ms |
+| | 500 | 2.904,33 | $1,18 | 0,0708 | 5,18 ms |
+| | **1000** | **5.752,88** | **$2,36** | **0,0414** | **2,63 ms** |
+| **Synthetic Uniform** | 100 | 159,80 | $1,18 | 0,2574 | 0,54 ms |
+| | 200 | 315,23 | $1,18 | 0,2854 | 1,75 ms |
+| | 500 | 761,26 | $1,18 | 0,2362 | 1,72 ms |
+| | **1000** | **1.490,10** | **$1,18** | **0,2202** | **3,09 ms** |
+| **Synthetic Normal** | 100 | 160,97 | $1,18 | 0,1924 | 0,86 ms |
+| | 200 | 310,76 | $1,18 | 0,2093 | 1,82 ms |
+| | 500 | 771,65 | $1,18 | 0,2299 | 1,57 ms |
+| | **1000** | **1.539,64** | **$1,18** | **0,2499** | **2,37 ms** |
+
+---
+
+### B. 4 Temuan Utama & Analisis Fenomena Data
+
+#### 1. Mengapa Makespan GoCJ ~3,8× Lebih Lama dari Sintetis?
+- **Fakta Data:** Pada 1.000 task, Makespan GoCJ mencapai **5.752 detik ($\approx$ 95,8 menit)**, sedangkan Sintetis Uniform hanya **1.490 detik ($\approx$ 24,8 menit)**.
+- **Penyebab Teknis:**
+  - Pada dataset sintetis, panjang task dibatasi secara artifisial antara **1.000 – 50.000 MI** (rata-rata $\approx 25.500$ MI).
+  - Pada dataset riil Google Cloud Jobs (`GoCJ`), task length rata-rata adalah **$\approx 130.000$ MI** dengan beberapa task besar (*heavy compute*) mencapai hingga **900.000 MI**.
+- **Kesimpulan Akademis:** Trace riil industri cloud memiliki variabilitas dan *heavy-tailed distribution* yang jauh lebih ekstrem dibanding distribusi statistik sintetis acak. Ini membuktikan bahwa algoritma TOPSIS berhasil diuji pada skenario stres beban kerja nyata.
+
+#### 2. Mengapa Total Cost Tetap $1,18 pada 100–500 Task, Lalu Melonjak ke $2,36 pada 1.000 Task GoCJ?
+- **Fakta Data:** Cost konstan di $1,18 untuk hampir semua batch, namun melompat tepat 2× lipat menjadi $2,36 khusus pada 1.000 task GoCJ.
+- **Rasionalisasi Model Biaya (Hourly Billing):**
+  - Total tarif sewa seluruh 10 VM per 1 jam adalah:
+    $$\text{Tarif} = (4 \times \$0,05) + (4 \times \$0,12) + (2 \times \$0,25) = \$0,20 + \$0,48 + \$0,50 = \$1,18 / \text{jam}$$
+  - Sistem cloud publik (seperti AWS EC2 / GCP) membulatkan tagihan ke atas per jam pemakaian ($\lceil \text{durasi} / 3600 \rceil$).
+  - Untuk 100, 200, dan 500 task (serta seluruh batch sintetis), Makespan $< 3.600$ detik (kurang dari 1 jam). Semua VM aktif dalam rentang jam pertama, sehingga tagihannya tepat **$1,18**.
+  - Khusus pada 1.000 task GoCJ, Makespan mencapai **5.752 detik ($\approx 1,6$ jam)**. Karena telah melewati batas 1 jam (3.600 detik) dan masuk ke jam kedua, tagihan seluruh VM dibulatkan menjadi 2 jam sewa:
+    $$\text{Cost} = 2 \text{ jam} \times \$1,18 = \$2,36$$
+
+#### 3. Fenomena Degree of Imbalance (DI): Mengapa Semakin Banyak Task, DI Semakin Seimbang?
+- **Fakta Data:** Pada workload GoCJ, nilai DI justru turun drastis seiring bertambahnya beban:
+  $$100 \text{ tasks: } 0,2907 \longrightarrow 200 \text{ tasks: } 0,0681 \longrightarrow 1.000 \text{ tasks: } \mathbf{0,0414}$$
+- **Penyebab Teknis:**
+  - Pada batch kecil (100 task), jika sebuah task raksasa (misal 900.000 MI) jatuh ke salah satu VM, waktu eksekusi task tunggal tersebut mendominasi durasi VM tersebut sehingga rasio selisih $(T_{\max} - T_{\min})$ masih terasa.
+  - Pada batch besar (1.000 task), mekanisme pembaruan `predictedReadyTime` pada TOPSIS bekerja secara sempurna. Setiap kali satu VM menerima task besar, skor TOPSIS-nya turun untuk task berikutnya, sehingga puluhan task berikutnya dialihkan ke VM lain.
+  - Hasilnya, pada 1.000 task, waktu sibuk (*busy time*) kesepuluh VM berkumpul sangat rapat di rentang **5.509 detik hingga 5.738 detik** (hanya selisih $\approx 4\%$). Ini membuktikan TOPSIS mencegah *resource starvation* dan *idle resources*.
+
+#### 4. Analisis Distribusi Alokasi Beban per VM (`docs/cloudsim_vm_allocation_1000.csv`)
+Pada pengujian 1.000 task GoCJ:
+- **Small VM (VM 0–3, 1.000 MIPS):** Menerima 79–88 task per VM, Busy Time $\approx 5.614 - 5.674$ detik.
+- **Medium VM (VM 4–7, 2.500 MIPS):** Menerima 118–130 task per VM, Busy Time $\approx 5.632 - 5.738$ detik.
+- **Large VM (VM 8–9, 5.000 MIPS):** Menerima 82–85 task per VM, Busy Time $\approx 5.509 - 5.650$ detik.
+- **Insight Menarik:**
+  - Medium VM menerima **jumlah task terbanyak (118–130 task)** karena Medium VM memiliki *rasio efisiensi biaya-kecepatan paling manis* ($2.500 \text{ MIPS}$ dengan tarif hanya $\$0,12$/jam dibanding Large VM $\$0,25$/jam).
+  - Large VM menerima task-task dengan instruksi yang lebih besar (panjang) sehingga meski jumlah task-nya lebih sedikit (82–85 task), durasi komputasinya tetap seimbang dengan VM lainnya.
+
+#### 5. Efisiensi Algoritma (Runtime < 6 milidetik)
+- Runtime komputasi TOPSIS untuk memetakan 1.000 task hanya membutuhkan waktu **$\approx 2,6 - 5,2$ milidetik**.
+- Kompleksitas waktu algoritma adalah $\mathcal{O}(N \times M)$ dengan $N = \text{tasks}$ dan $M = 10 \text{ VMs}$. Operasi matriks berukuran $10 \times 2$ dapat diproses secara instan dalam memori tanpa menimbulkan jeda *scheduling delay*.
