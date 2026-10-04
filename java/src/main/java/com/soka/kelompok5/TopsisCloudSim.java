@@ -4,7 +4,7 @@ import org.cloudsimplus.brokers.DatacenterBroker;
 import org.cloudsimplus.brokers.DatacenterBrokerSimple;
 import org.cloudsimplus.cloudlets.Cloudlet;
 import org.cloudsimplus.cloudlets.CloudletSimple;
-import org.cloudsimplus.core.CloudSim;
+import org.cloudsimplus.core.CloudSimPlus;
 import org.cloudsimplus.datacenters.Datacenter;
 import org.cloudsimplus.datacenters.DatacenterSimple;
 import org.cloudsimplus.hosts.Host;
@@ -161,7 +161,7 @@ public class TopsisCloudSim {
      * Menjalankan satu siklus simulasi CloudSim Plus dengan scheduler TOPSIS
      */
     public static SimulationResult runCloudSimSimulation(String workloadName, List<TaskItem> tasks, int nTasks) {
-        CloudSim simulation = new CloudSim();
+        CloudSimPlus simulation = new CloudSimPlus();
 
         // 1. Buat Datacenter (4 Host fisik sesuai tabel Desain Proyek)
         Datacenter datacenter = createDatacenter(simulation);
@@ -252,7 +252,7 @@ public class TopsisCloudSim {
      * - Host 0 & 1: 8 Core @ 10.000 MIPS, RAM 32 GB, Storage 1 TB, BW 10 Gbps
      * - Host 2 & 3: 16 Core @ 20.000 MIPS, RAM 64 GB, Storage 2 TB, BW 10 Gbps
      */
-    private static Datacenter createDatacenter(CloudSim simulation) {
+    private static Datacenter createDatacenter(CloudSimPlus simulation) {
         List<Host> hostList = new ArrayList<>();
 
         // Host 0 & 1 (2 unit)
