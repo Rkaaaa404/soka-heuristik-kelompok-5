@@ -271,8 +271,8 @@ public class TopsisCloudSim {
 
             AggregatedResult agg = new AggregatedResult(scale, scaleRuns);
             aggregatedResults.add(agg);
-            System.out.printf(Locale.US, "  => Rata-rata Skala %d: Makespan = %.2f \u00b1 %.2f s | Cost = $%.2f \u00b1 %.2f | DI = %.4f \u00b1 %.4f\n",
-                    scale, agg.meanMakespan, agg.stdMakespan, agg.meanCost, agg.stdCost, agg.meanDi, agg.stdDi);
+            System.out.printf(Locale.US, "  => Rata-rata Skala %5d: Makespan = %8.2f +/- %-5.2f s | Cost = $%5.2f +/- %-4.2f | DI = %6.4f +/- %-6.4f | Runtime = %5.2f +/- %-5.2f ms%n",
+                    scale, agg.meanMakespan, agg.stdMakespan, agg.meanCost, agg.stdCost, agg.meanDi, agg.stdDi, agg.meanRuntimeMs, agg.stdRuntimeMs);
         }
 
         printFinalSummaryTable(aggregatedResults);
@@ -634,16 +634,22 @@ public class TopsisCloudSim {
     }
 
     private static void printFinalSummaryTable(List<AggregatedResult> results) {
-        System.out.println("\n=========================================================================================");
-        System.out.printf("  RINGKASAN TOPSIS (MEAN \u00b1 STD DEV SAMPEL, %d RUNS)%n", RUNS_PER_SCALE);
-        System.out.println("=========================================================================================");
-        System.out.printf("%-8s %-24s %-20s %-20s %-20s\n", "Tasks", "Makespan (s)", "Total Cost ($)", "DI", "Runtime (ms)");
-        System.out.println("-----------------------------------------------------------------------------------------");
+        String sep = "+-------+-----------------------+------------------+---------------------+------------------+";
+        System.out.println("\n" + sep);
+        System.out.printf(Locale.US, "|                 RINGKASAN METRIK TOPSIS (MEAN +/- STD DEV, %d RUNS)                  |%n", RUNS_PER_SCALE);
+        System.out.println(sep);
+        System.out.println("| Tasks |     Makespan (s)      |  Total Cost ($)  |   DI (Imbalance)    |   Runtime (ms)   |");
+        System.out.println("|       |    (Mean +/- Std)     |  (Mean +/- Std)  |   (Mean +/- Std)    |  (Mean +/- Std)  |");
+        System.out.println(sep);
         for (AggregatedResult r : results) {
-            System.out.printf(Locale.US, "%-8d %10.2f \u00b1 %-8.2f %8.2f \u00b1 %-8.2f %8.4f \u00b1 %-8.4f %8.2f \u00b1 %-8.2f\n",
-                    r.nTasks, r.meanMakespan, r.stdMakespan, r.meanCost, r.stdCost, r.meanDi, r.stdDi, r.meanRuntimeMs, r.stdRuntimeMs);
+            String mStr = String.format(Locale.US, "%9.2f +/- %-5.2f", r.meanMakespan, r.stdMakespan);
+            String cStr = String.format(Locale.US, "%5.2f +/- %-4.2f", r.meanCost, r.stdCost);
+            String dStr = String.format(Locale.US, "%6.4f +/- %-6.4f", r.meanDi, r.stdDi);
+            String rStr = String.format(Locale.US, "%6.2f +/- %-5.2f", r.meanRuntimeMs, r.stdRuntimeMs);
+            System.out.printf(Locale.US, "| %5d |  %-19s  |  %-14s  |  %-17s  | %-16s |%n",
+                    r.nTasks, mStr, cStr, dStr, rStr);
         }
-        System.out.println("=========================================================================================");
+        System.out.println(sep);
     }
 
     private static void exportMetricsCsv(Path targetDir, List<SingleRunResult> runs) {
