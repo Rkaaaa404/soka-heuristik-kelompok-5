@@ -1,5 +1,7 @@
 package com.soka.kelompok5;
 
+import ch.qos.logback.classic.Level;
+import org.cloudsimplus.allocationpolicies.VmAllocationPolicySimple;
 import org.cloudsimplus.brokers.DatacenterBroker;
 import org.cloudsimplus.brokers.DatacenterBrokerSimple;
 import org.cloudsimplus.cloudlets.Cloudlet;
@@ -13,42 +15,100 @@ import org.cloudsimplus.resources.Pe;
 import org.cloudsimplus.resources.PeSimple;
 import org.cloudsimplus.schedulers.cloudlet.CloudletSchedulerSpaceShared;
 import org.cloudsimplus.schedulers.vm.VmSchedulerSpaceShared;
+import org.cloudsimplus.util.Log;
+import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
 import org.cloudsimplus.vms.Vm;
 import org.cloudsimplus.vms.VmSimple;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
-import java.util.*;
+import java.io.PrintWriter;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Random;
 
 /**
- * Simulasi Penjadwalan Cloudlet Menggunakan CloudSim Plus & Algoritma TOPSIS
- * Berdasarkan Desain Proyek Kelompok 5 - Strategi Optimasi Komputasi Awan (SOKA)
- * 
- * Infrastruktur:
- * - 1 Datacenter
- * - 4 Physical Host (Host 1-2: 8 core @ 10k MIPS; Host 3-4: 16 core @ 20k MIPS)
- * - 10 VM Heterogen (4 Small, 4 Medium, 2 Large)
- * - Workload: GoCJ Real Trace & Sintetis (Uniform & Normal Distribution)
- * - Multi-Objective TOPSIS: Minimasi Makespan & Total Biaya Eksekusi (Bobot 0.5 : 0.5)
+ * ==============================================================================
+ * SIMULASI PENJADWALAN CLOUDLET DENGAN MULTI-KRITERIA TOPSIS (CLOUDSIM PLUS)
+ * Strategi Optimasi Komputasi Awan (SOKA) - Kelompok 5
+ * ==============================================================================
+ *
+ * ARSITEKTUR INFRASTRUKTUR CLOUD:
+ * - 2 Datacenter Fisik (DC 1: Host 0-3, DC 2: Host 4-7)
+ * - 8 Physical Host HOMOGEN (Masing-masing 24 Core @ 10.000 MIPS, 64 GB RAM, 2 TB Storage)
+ * - 80 Virtual Machine HETEROGEN (10 VM per Host: 4 Small, 4 Medium, 2 Large)
+ *   -> Total Kapasitas: 160 vCPU, 320 GB RAM, tarif sewa agregat $9.44/jam
+ *
+ * PEMETAAN DETERMINISTIK (SETIAP HOST MENAMPUNG VM):
+ * - DC 1: Host 0 (VM 0-9),   Host 1 (VM 10-19), Host 2 (VM 20-29), Host 3 (VM 30-39)
+ * - DC 2: Host 4 (VM 40-49), Host 5 (VM 50-59), Host 6 (VM 60-69), Host 7 (VM 70-79)
+ *
+ * KARAKTERISTIK WORKLOAD GOOGLE CLOUD JOBS (GoCJ):
+ * - GoCJ merepresentasikan INDEPENDENT TASKS (Bag-of-Tasks / Meta-Tasks).
+ * - Tidak memiliki graph precedence / ketergantungan antar-task.
+ * - Kolom SLA adalah SERVICE LEVEL AGREEMENT (Tingkat Prioritas: 1=Low, 2=Medium, 3=High),
+ *   BUKAN task dependency!
+ *
+ * SKENARIO PENGUJIAN:
+ * - 10 Variasi Skala Task: 1.000, 2.000, ..., 10.000 tasks.
+ * - 3 Kali Repeated Runs per variasi untuk uji konsistensi statistik (Mean ± Std Dev).
+ * ==============================================================================
  */
 public class TopsisCloudSim {
 
-    // Struktur metadata konfigurasi VM
-    public static class VmSpec {
-        public final int id;
-        public final String type;
+    private static final int DATACENTER_COUNT = 2;
+    private static final int HOSTS_PER_DATACENTER = 4;
+    private static final int HOST_COUNT = DATACENTER_COUNT * HOSTS_PER_DATACENTER;
+    private static final int[] VMS_PER_TYPE_PER_HOST = {4, 4, 2};
+    private static final int VMS_PER_HOST = Arrays.stream(VMS_PER_TYPE_PER_HOST).sum();
+    private static final int HOST_PES = 24;
+    private static final double HOST_MIPS = 10_000;
+    private static final long HOST_RAM_MB = 65_536;
+    private static final long HOST_STORAGE_MB = 2_000_000;
+    private static final long HOST_BW_MBPS = 10_000;
+    private static final long VM_STORAGE_MB = 50_000;
+    private static final long VM_BW_MBPS = 1_000;
+    private static final double BYTES_PER_MB = 1_000_000.0;
+    private static final double VM_BW_BYTES_PER_SECOND = VM_BW_MBPS * BYTES_PER_MB / 8;
+    private static final double SECONDS_PER_HOUR = 3_600.0;
+    private static final double TIME_WEIGHT = 0.5;
+    private static final double COST_WEIGHT = 0.5;
+    private static final int RUNS_PER_SCALE = 3;
+    private static final int MAX_TASKS = 10_000;
+    private static final int TASK_SCALE_STEP = 1_000;
+    private static final Comparator<TaskItem> TASK_ORDER = Comparator
+            .comparingDouble((TaskItem task) -> task.arrivalTime).thenComparingInt(task -> task.id);
+
+    // ─────────────────────────────────────────────────────────────
+    // 1. DEFINISI TEMPLATE VM (HETEROGEN) & SPESIFIKASI HOST (HOMOGEN)
+    // ─────────────────────────────────────────────────────────────
+
+    public enum VmType {
+        SMALL("Small", 1000.0, 1, 2048, VM_BW_BYTES_PER_SECOND, 0.05),
+        MEDIUM("Medium", 2500.0, 2, 4096, VM_BW_BYTES_PER_SECOND, 0.12),
+        LARGE("Large", 5000.0, 4, 8192, VM_BW_BYTES_PER_SECOND, 0.25);
+
+        public final String label;
         public final double mips;
         public final int pes;
         public final long ramMb;
-        public final double bwBytesPerSec; // 125 MB/s (1 Gbps)
+        public final double bwBytesPerSec;
         public final double hourlyRate;
 
-        public VmSpec(int id, String type, double mips, int pes, long ramMb, double bwBytesPerSec, double hourlyRate) {
-            this.id = id;
-            this.type = type;
+        VmType(String label, double mips, int pes, long ramMb, double bwBytesPerSec, double hourlyRate) {
+            this.label = label;
             this.mips = mips;
             this.pes = pes;
             this.ramMb = ramMb;
@@ -57,30 +117,48 @@ public class TopsisCloudSim {
         }
     }
 
-    // Definisi 10 VM heterogen sesuai tabel desain proyek & notebook
-    private static final List<VmSpec> VM_SPECS = Arrays.asList(
-        // 4 Small VMs (VM 0-3): 1 vCPU (1.000 MIPS), RAM 2 GB, $0.05/jam, BW 1 Gbps
-        new VmSpec(0, "Small", 1000, 1, 2048, 125_000_000, 0.05),
-        new VmSpec(1, "Small", 1000, 1, 2048, 125_000_000, 0.05),
-        new VmSpec(2, "Small", 1000, 1, 2048, 125_000_000, 0.05),
-        new VmSpec(3, "Small", 1000, 1, 2048, 125_000_000, 0.05),
-        // 4 Medium VMs (VM 4-7): 2 vCPU (2.500 MIPS), RAM 4 GB, $0.12/jam, BW 1 Gbps
-        new VmSpec(4, "Medium", 2500, 1, 4096, 125_000_000, 0.12),
-        new VmSpec(5, "Medium", 2500, 1, 4096, 125_000_000, 0.12),
-        new VmSpec(6, "Medium", 2500, 1, 4096, 125_000_000, 0.12),
-        new VmSpec(7, "Medium", 2500, 1, 4096, 125_000_000, 0.12),
-        // 2 Large VMs (VM 8-9): 4 vCPU (5.000 MIPS), RAM 8 GB, $0.25/jam, BW 1 Gbps
-        new VmSpec(8, "Large", 5000, 1, 8192, 125_000_000, 0.25),
-        new VmSpec(9, "Large", 5000, 1, 8192, 125_000_000, 0.25)
-    );
+    public static class VmSpec {
+        public final int id;
+        public final VmType type;
+        public final int dcId;      // 0 = Datacenter 1, 1 = Datacenter 2
+        public final int hostId;    // 0 s/d 7
+        public VmSpec(int id, VmType type, int dcId, int hostId) {
+            this.id = id;
+            this.type = type;
+            this.dcId = dcId;
+            this.hostId = hostId;
+        }
+    }
 
-    // Representasi Task/Workload
+    /**
+     * Membangun daftar 80 VM heterogen dengan pola 10 VM per host:
+     * - Host 0-3 di Datacenter 1 (VM 0-39)
+     * - Host 4-7 di Datacenter 2 (VM 40-79)
+     */
+    private static List<VmSpec> buildVmSpecs() {
+        List<VmSpec> list = new ArrayList<>();
+        for (int hostId = 0; hostId < HOST_COUNT; hostId++) {
+            for (VmType type : VmType.values()) {
+                for (int i = 0; i < VMS_PER_TYPE_PER_HOST[type.ordinal()]; i++) {
+                    list.add(new VmSpec(list.size(), type, hostId / HOSTS_PER_DATACENTER, hostId));
+                }
+            }
+        }
+        return List.copyOf(list);
+    }
+
+    public static final List<VmSpec> ALL_VM_SPECS = buildVmSpecs();
+
+    // ─────────────────────────────────────────────────────────────
+    // 2. MODEL DATA WORKLOAD & METRIK HASIL SIMULASI
+    // ─────────────────────────────────────────────────────────────
+
     public static class TaskItem {
         public final int id;
         public final double lengthMi;
-        public final int sla;
-        public final double arrivalTime;
-        public final double ioBytes;
+        public final int sla;           // Level of Priority (1=Low, 2=Medium, 3=High)
+        public final double arrivalTime; // Waktu kedatangan (detik)
+        public final double ioBytes;    // Ukuran transfer I/O (bytes)
 
         public TaskItem(int id, double lengthMi, int sla, double arrivalTime, double ioBytes) {
             this.id = id;
@@ -91,9 +169,8 @@ public class TopsisCloudSim {
         }
     }
 
-    // Hasil Pengujian
-    public static class SimulationResult {
-        public final String workload;
+    public static class SingleRunResult {
+        public final int runId;
         public final int nTasks;
         public final double makespan;
         public final double totalCost;
@@ -102,10 +179,10 @@ public class TopsisCloudSim {
         public final double[] vmBusyTimes;
         public final int[] vmTaskCounts;
 
-        public SimulationResult(String workload, int nTasks, double makespan, double totalCost,
-                                double degreeOfImbalance, double algoRuntimeMs,
-                                double[] vmBusyTimes, int[] vmTaskCounts) {
-            this.workload = workload;
+        public SingleRunResult(int runId, int nTasks, double makespan, double totalCost,
+                               double degreeOfImbalance, double algoRuntimeMs,
+                               double[] vmBusyTimes, int[] vmTaskCounts) {
+            this.runId = runId;
             this.nTasks = nTasks;
             this.makespan = makespan;
             this.totalCost = totalCost;
@@ -116,195 +193,311 @@ public class TopsisCloudSim {
         }
     }
 
+    public static class AggregatedResult {
+        public final int nTasks;
+        public final double meanMakespan;
+        public final double stdMakespan;
+        public final double meanCost;
+        public final double stdCost;
+        public final double meanDi;
+        public final double stdDi;
+        public final double meanRuntimeMs;
+        public final double stdRuntimeMs;
+
+        public AggregatedResult(int nTasks, List<SingleRunResult> runs) {
+            this.nTasks = nTasks;
+            if (runs.size() < 2) throw new IllegalArgumentException("Agregasi membutuhkan minimal dua run");
+
+            double sumMakespan = 0, sumCost = 0, sumDi = 0, sumRt = 0;
+            int n = runs.size();
+            for (SingleRunResult r : runs) {
+                sumMakespan += r.makespan;
+                sumCost += r.totalCost;
+                sumDi += r.degreeOfImbalance;
+                sumRt += r.algoRuntimeMs;
+            }
+            this.meanMakespan = sumMakespan / n;
+            this.meanCost = sumCost / n;
+            this.meanDi = sumDi / n;
+            this.meanRuntimeMs = sumRt / n;
+
+            double varMakespan = 0, varCost = 0, varDi = 0, varRt = 0;
+            for (SingleRunResult r : runs) {
+                varMakespan += Math.pow(r.makespan - meanMakespan, 2);
+                varCost += Math.pow(r.totalCost - meanCost, 2);
+                varDi += Math.pow(r.degreeOfImbalance - meanDi, 2);
+                varRt += Math.pow(r.algoRuntimeMs - meanRuntimeMs, 2);
+            }
+            // Standar deviasi sampel, sama dengan pandas.std(ddof=1).
+            this.stdMakespan = Math.sqrt(varMakespan / (n - 1));
+            this.stdCost = Math.sqrt(varCost / (n - 1));
+            this.stdDi = Math.sqrt(varDi / (n - 1));
+            this.stdRuntimeMs = Math.sqrt(varRt / (n - 1));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 3. MAIN RUNNER (1.000 S/D 10.000 TASKS, 3 RUNS MASING-MASING)
+    // ─────────────────────────────────────────────────────────────
+
     public static void main(String[] args) {
-        int[] taskCounts = {100, 200, 500, 1000};
+        // Reduksi log internal CloudSim Plus agar output terminal bersih dan fokus
+        Log.setLevel(Level.ERROR);
 
         System.out.println("=========================================================================================");
-        System.out.println("  SIMULASI CLOUDSIM: PENJADWALAN CLOUDLET DENGAN MULTI-KRITERIA TOPSIS (SOKA KELOMPOK 5) ");
-        System.out.println("  Arsitektur: 1 Datacenter, 4 Physical Hosts, 10 Heterogeneous VMs (Non-Preemptive)      ");
+        System.out.println("  SIMULASI CLOUDSIM PLUS: EVALUASI TOPSIS SKALA MASIF GOOGLE CLOUD JOBS (1K - 10K TASKS)");
+        System.out.printf("  Arsitektur: %d Datacenter, %d Host Homogen, %d VM Heterogen (%d VM/Host)%n",
+                DATACENTER_COUNT, HOST_COUNT, ALL_VM_SPECS.size(), VMS_PER_HOST);
+        System.out.printf("  Pengujian: %d Repeated Runs per Skala Task%n", RUNS_PER_SCALE);
         System.out.println("=========================================================================================\n");
 
-        // 1. Eksekusi Dataset Riil GoCJ
-        System.out.println("Menjalankan simulasi batch task (100, 200, 500, 1000)...\n");
-        List<SimulationResult> gocjResults = new ArrayList<>();
-        List<SimulationResult> uniformResults = new ArrayList<>();
-        List<SimulationResult> normalResults = new ArrayList<>();
+        printAllocationArchitectureTable();
 
-        List<SimulationResult> allResults = new ArrayList<>();
+        Path projectRoot = findProjectRoot();
 
-        for (int n : taskCounts) {
-            List<TaskItem> gocjTasks = loadGocjWorkload(n, 42);
-            SimulationResult rg = runCloudSimSimulation("GoCJ (Real Trace)", gocjTasks, n);
-            gocjResults.add(rg);
-            allResults.add(rg);
+        List<AggregatedResult> aggregatedResults = new ArrayList<>();
+        List<SingleRunResult> allSingleRuns = new ArrayList<>();
+        SingleRunResult lastScaleRun = null;
 
-            List<TaskItem> uniformTasks = generateSyntheticWorkload(n, "uniform", 42);
-            SimulationResult ru = runCloudSimSimulation("Synthetic Uniform", uniformTasks, n);
-            uniformResults.add(ru);
-            allResults.add(ru);
+        System.out.printf("%n[INFO] Benchmark multi-skala (total %d run simulasi)...%n",
+                MAX_TASKS / TASK_SCALE_STEP * RUNS_PER_SCALE);
 
-            List<TaskItem> normalTasks = generateSyntheticWorkload(n, "normal", 42);
-            SimulationResult rn = runCloudSimSimulation("Synthetic Normal", normalTasks, n);
-            normalResults.add(rn);
-            allResults.add(rn);
+        for (int scale = TASK_SCALE_STEP; scale <= MAX_TASKS; scale += TASK_SCALE_STEP) {
+            System.out.printf("\n--- Menjalankan Skala %d Tasks (%d runs) ---\n", scale, RUNS_PER_SCALE);
+            List<SingleRunResult> scaleRuns = new ArrayList<>();
+
+            for (int run = 1; run <= RUNS_PER_SCALE; run++) {
+                long ioSeed = 42L + (scale * 10L) + run;
+                Path dataset = projectRoot.resolve("gocj_dataset/GoCJ_Dataset_" + scale + ".csv");
+                List<TaskItem> tasks = loadGocjWorkload(dataset, scale, ioSeed);
+
+                SingleRunResult res = executeSimulation(scale, run, tasks);
+                scaleRuns.add(res);
+                allSingleRuns.add(res);
+                lastScaleRun = res;
+
+                System.out.printf(Locale.US, "  Run %d/%d: Makespan = %.2f s | Cost = $%.2f | DI = %.4f | TOPSIS Runtime = %.2f ms\n",
+                        run, RUNS_PER_SCALE, res.makespan, res.totalCost, res.degreeOfImbalance, res.algoRuntimeMs);
+            }
+
+            AggregatedResult agg = new AggregatedResult(scale, scaleRuns);
+            aggregatedResults.add(agg);
+            System.out.printf(Locale.US, "  => Rata-rata Skala %d: Makespan = %.2f \u00b1 %.2f s | Cost = $%.2f \u00b1 %.2f | DI = %.4f \u00b1 %.4f\n",
+                    scale, agg.meanMakespan, agg.stdMakespan, agg.meanCost, agg.stdCost, agg.meanDi, agg.stdDi);
         }
 
-        printResultTable("Ringkasan Hasil: GoCJ Real Trace", gocjResults);
-        printResultTable("Ringkasan Hasil: Sintetis Uniform", uniformResults);
-        printResultTable("Ringkasan Hasil: Sintetis Normal", normalResults);
+        printFinalSummaryTable(aggregatedResults);
 
-        // Ekspor data ke file CSV agar dapat divisualisasikan oleh Python / Excel
-        exportResultsToCsv(allResults);
-        exportVmDistributionCsv(gocjResults.get(gocjResults.size() - 1));
+        // Ekspor ke CSV di folder docs/
+        exportMetricsCsv(projectRoot.resolve("docs"), allSingleRuns);
+        if (lastScaleRun != null) {
+            exportVmAllocationCsv(projectRoot.resolve("docs"), lastScaleRun);
+        }
+
+        System.out.println("\n[SELESAI] Seluruh simulasi selesai dengan sukses. Data CSV telah diperbarui di folder docs/.");
     }
-    /**
-     * Menjalankan satu siklus simulasi CloudSim Plus dengan scheduler TOPSIS
-     */
-    public static SimulationResult runCloudSimSimulation(String workloadName, List<TaskItem> tasks, int nTasks) {
+
+    // ─────────────────────────────────────────────────────────────
+    // 4. EKSEKUSI ENGINE SIMULASI CLOUDSIM PLUS DENGAN 2 DATACENTER
+    // ─────────────────────────────────────────────────────────────
+
+    static SingleRunResult executeSimulation(int nTasks, int runId, List<TaskItem> tasks) {
+        if (tasks.size() != nTasks) throw new IllegalArgumentException("Jumlah task tidak sesuai skala");
         CloudSimPlus simulation = new CloudSimPlus();
+        DatacenterBroker broker = createBroker(simulation);
+        List<Vm> vms = createVms();
+        broker.submitVmList(vms);
 
-        // 1. Buat Datacenter (4 Host fisik sesuai tabel Desain Proyek)
-        Datacenter datacenter = createDatacenter(simulation);
+        long started = System.nanoTime();
+        int[] assignments = scheduleTasksTopsis(tasks, ALL_VM_SPECS, TIME_WEIGHT, COST_WEIGHT);
+        double runtimeMs = (System.nanoTime() - started) / 1_000_000.0;
 
-        // 2. Buat Broker CloudSim
-        DatacenterBroker broker = new DatacenterBrokerSimple(simulation);
-
-        // 3. Buat 10 VM Heterogen
-        List<Vm> vmList = new ArrayList<>();
-        for (VmSpec spec : VM_SPECS) {
-            Vm vm = new VmSimple(spec.id, spec.mips, spec.pes);
-            vm.setRam(spec.ramMb)
-              .setBw(1000) // 1 Gbps
-              .setSize(50000)
-              .setCloudletScheduler(new CloudletSchedulerSpaceShared());
-            vmList.add(vm);
-        }
-        broker.submitVmList(vmList);
-
-        // 4. Jalankan Algoritma TOPSIS untuk Menentukan Mapping Task -> VM
-        long t0 = System.nanoTime();
-        int[] taskToVmMapping = scheduleTasksTopsis(tasks, VM_SPECS, 0.5, 0.5);
-        long algoDurationNs = System.nanoTime() - t0;
-        double algoRuntimeMs = algoDurationNs / 1_000_000.0;
-
-        // 5. Konversi Task menjadi Cloudlet CloudSim Plus
-        List<Cloudlet> cloudletList = new ArrayList<>();
-        for (int i = 0; i < tasks.size(); i++) {
-            TaskItem task = tasks.get(i);
-            int chosenVmId = taskToVmMapping[i];
-            Vm chosenVm = vmList.get(chosenVmId);
-            VmSpec chosenSpec = VM_SPECS.get(chosenVmId);
-
-            // Perhitungan durasi eksekusi: Komputasi CPU + Transfer I/O
-            double ioDuration = task.ioBytes / chosenSpec.bwBytesPerSec;
-            long effectiveMi = (long) (task.lengthMi + (ioDuration * chosenSpec.mips));
-
-            Cloudlet cloudlet = new CloudletSimple(task.id, effectiveMi, 1);
-            cloudlet.setUtilizationModel(new UtilizationModelFull());
-            cloudlet.setVm(chosenVm);
-            cloudletList.add(cloudlet);
-        }
-        broker.submitCloudletList(cloudletList);
-
-        // 6. Jalankan Simulasi Engine CloudSim
+        broker.submitCloudletList(createCloudlets(tasks, assignments, vms));
         simulation.start();
+        validateVmAllocation(vms);
+        List<Cloudlet> finished = broker.getCloudletFinishedList();
+        validateFinishedTasks(tasks, assignments, finished);
+        return calculateMetrics(nTasks, runId, runtimeMs, finished);
+    }
 
-        // 7. Hitung Metrik Evaluasi: Makespan, Total Cost, DI
-        List<Cloudlet> finishedCloudlets = broker.getCloudletFinishedList();
-        double[] vmFinishTimes = new double[VM_SPECS.size()];
-        double[] vmBusyTimes = new double[VM_SPECS.size()];
-        int[] vmTaskCounts = new int[VM_SPECS.size()];
-
-        for (Cloudlet c : finishedCloudlets) {
-            int vmId = (int) c.getVm().getId();
-            vmTaskCounts[vmId]++;
-            double finish = c.getFinishTime();
-            double duration = c.getActualCpuTime();
-
-            if (finish > vmFinishTimes[vmId]) {
-                vmFinishTimes[vmId] = finish;
-            }
-            vmBusyTimes[vmId] += duration;
+    static DatacenterBroker createBroker(CloudSimPlus simulation) {
+        List<Datacenter> datacenters = new ArrayList<>();
+        for (int dcIndex = 0; dcIndex < DATACENTER_COUNT; dcIndex++) {
+            List<Host> hosts = createHostList(dcIndex * HOSTS_PER_DATACENTER, HOSTS_PER_DATACENTER);
+            var policy = new VmAllocationPolicySimple((allocationPolicy, vm) -> {
+                VmSpec spec = ALL_VM_SPECS.get(Math.toIntExact(vm.getId()));
+                return Optional.of(allocationPolicy.getHostList().get(spec.hostId % HOSTS_PER_DATACENTER));
+            });
+            datacenters.add(new DatacenterSimple(simulation, hosts, policy));
         }
+        DatacenterBroker broker = new DatacenterBrokerSimple(simulation);
+        broker.setDatacenterMapper((lastDc, vm) ->
+                datacenters.get(ALL_VM_SPECS.get(Math.toIntExact(vm.getId())).dcId));
+        return broker;
+    }
 
-        double makespan = Arrays.stream(vmFinishTimes).max().orElse(0.0);
+    static List<Vm> createVms() {
+        List<Vm> vms = new ArrayList<>();
+        for (VmSpec spec : ALL_VM_SPECS) {
+            Vm vm = new VmSimple(spec.id, spec.type.mips, spec.type.pes);
+            vm.setRam(spec.type.ramMb).setBw(VM_BW_MBPS).setSize(VM_STORAGE_MB)
+                    .setCloudletScheduler(new CloudletSchedulerSpaceShared());
+            vms.add(vm);
+        }
+        return vms;
+    }
 
-        // Total Cost sewa VM: Pembulatan ke atas per jam pemakaian (sesuai notebook)
-        double totalCost = 0.0;
-        for (int i = 0; i < VM_SPECS.size(); i++) {
-            if (vmBusyTimes[i] > 0) {
-                double hours = Math.ceil(vmBusyTimes[i] / 3600.0);
-                totalCost += hours * VM_SPECS.get(i).hourlyRate;
+    static double executionTime(TaskItem task, VmType type) {
+        // I/O adalah tambahan durasi tanpa contention, dikonversi menjadi MI CPU.
+        // Pembulatan identik pada prediksi TOPSIS dan panjang cloudlet.
+        return effectiveLengthMi(task, type) / type.mips;
+    }
+
+    private static long effectiveLengthMi(TaskItem task, VmType type) {
+        return (long) Math.ceil(task.lengthMi + task.ioBytes / type.bwBytesPerSec * type.mips);
+    }
+
+    static List<Cloudlet> createCloudlets(List<TaskItem> tasks, int[] assignments, List<Vm> vms) {
+        List<Cloudlet> cloudlets = new ArrayList<>();
+        for (int index = 0; index < tasks.size(); index++) {
+            TaskItem task = tasks.get(index);
+            int vmIndex = assignments[index];
+            VmSpec spec = ALL_VM_SPECS.get(vmIndex);
+            Cloudlet cloudlet = new CloudletSimple(task.id, effectiveLengthMi(task, spec.type), 1);
+            cloudlet.setUtilizationModelCpu(new UtilizationModelFull());
+            cloudlet.setUtilizationModelRam(new UtilizationModelDynamic(0));
+            cloudlet.setUtilizationModelBw(new UtilizationModelDynamic(0));
+            cloudlet.setSubmissionDelay(task.arrivalTime);
+            cloudlet.setVm(vms.get(vmIndex));
+            cloudlets.add(cloudlet);
+        }
+        return cloudlets;
+    }
+
+    static void validateVmAllocation(List<Vm> vms) {
+        if (vms.size() != ALL_VM_SPECS.size()) {
+            throw new IllegalStateException("Jumlah VM tidak sesuai konfigurasi");
+        }
+        for (int index = 0; index < vms.size(); index++) {
+            VmSpec spec = ALL_VM_SPECS.get(index);
+            Vm vm = vms.get(index);
+            Host host = vm.getHost();
+            if (vm.getId() != spec.id || host == Host.NULL || host.getId() != spec.hostId) {
+                throw new IllegalStateException("Pemetaan host salah untuk VM " + spec.id);
+            }
+            List<Host> dcHosts = host.getDatacenter().getHostList();
+            if (dcHosts.size() != HOSTS_PER_DATACENTER
+                    || dcHosts.stream().anyMatch(h -> h.getId() / HOSTS_PER_DATACENTER != spec.dcId)) {
+                throw new IllegalStateException("Datacenter salah untuk VM " + spec.id);
             }
         }
+    }
 
-        // Degree of Imbalance (DI): (T_max - T_min) / T_avg
-        double tMax = Arrays.stream(vmFinishTimes).max().orElse(0.0);
-        double tMin = Arrays.stream(vmFinishTimes).min().orElse(0.0);
-        double tAvg = Arrays.stream(vmFinishTimes).average().orElse(0.0);
-        double di = (tAvg > 0) ? (tMax - tMin) / tAvg : 0.0;
+    static void validateFinishedTasks(List<TaskItem> tasks, int[] assignments, List<Cloudlet> finished) {
+        if (finished.size() != tasks.size()) {
+            throw new IllegalStateException("Task selesai " + finished.size() + "/" + tasks.size());
+        }
+        var taskIndexById = new HashMap<Long, Integer>();
+        for (int index = 0; index < tasks.size(); index++) {
+            TaskItem task = tasks.get(index);
+            if (taskIndexById.put((long) task.id, index) != null) {
+                throw new IllegalArgumentException("ID task duplikat: " + task.id);
+            }
+        }
+        var seen = new HashSet<Long>();
+        for (Cloudlet cloudlet : finished) {
+            Integer taskIndex = taskIndexById.get(cloudlet.getId());
+            if (taskIndex == null || !seen.add(cloudlet.getId()) || cloudlet.getStatus() != Cloudlet.Status.SUCCESS) {
+                throw new IllegalStateException("Task tidak valid/duplikat/gagal: " + cloudlet.getId());
+            }
+            TaskItem task = tasks.get(taskIndex);
+            if (cloudlet.getVm().getId() != ALL_VM_SPECS.get(assignments[taskIndex]).id) {
+                throw new IllegalStateException("Task selesai pada VM yang salah: " + task.id);
+            }
+            if (cloudlet.getExecStartTime() + 1e-9 < task.arrivalTime) {
+                throw new IllegalStateException("Task mulai sebelum arrival time: " + task.id);
+            }
+        }
+    }
 
-        return new SimulationResult(workloadName, nTasks, makespan, totalCost, di, algoRuntimeMs, vmBusyTimes, vmTaskCounts);
+    private static SingleRunResult calculateMetrics(int nTasks, int runId, double runtimeMs,
+                                                   List<Cloudlet> finished) {
+        int vmCount = ALL_VM_SPECS.size();
+        double[] finishTimes = new double[vmCount];
+        double[] busyTimes = new double[vmCount];
+        int[] taskCounts = new int[vmCount];
+        for (Cloudlet cloudlet : finished) {
+            int vmIndex = Math.toIntExact(cloudlet.getVm().getId());
+            finishTimes[vmIndex] = Math.max(finishTimes[vmIndex], cloudlet.getFinishTime());
+            busyTimes[vmIndex] += cloudlet.getActualCpuTime();
+            taskCounts[vmIndex]++;
+        }
+        double makespan = Arrays.stream(finishTimes).max().orElse(0);
+        double totalCost = 0;
+        for (int index = 0; index < vmCount; index++) {
+            totalCost += Math.ceil(busyTimes[index] / SECONDS_PER_HOUR) * ALL_VM_SPECS.get(index).type.hourlyRate;
+        }
+        // T pada DI adalah jumlah durasi task, bukan timestamp selesai (yang mencakup idle).
+        var busyStats = Arrays.stream(busyTimes).summaryStatistics();
+        double di = busyStats.getAverage() > 0
+                ? (busyStats.getMax() - busyStats.getMin()) / busyStats.getAverage() : 0;
+        return new SingleRunResult(runId, nTasks, makespan, totalCost, di, runtimeMs, busyTimes, taskCounts);
     }
 
     /**
-     * Membangun 4 Physical Host sesuai Desain Proyek:
-     * - Host 0 & 1: 8 Core @ 10.000 MIPS, RAM 32 GB, Storage 1 TB, BW 10 Gbps
-     * - Host 2 & 3: 16 Core @ 20.000 MIPS, RAM 64 GB, Storage 2 TB, BW 10 Gbps
+     * Membuat daftar Host fisik homogen:
+     * - 24 Core CPU @ 10.000 MIPS (cukup menampung 20 vCPU dari 10 VM)
+     * - 64 GB RAM / 65.536 MB (cukup menampung 40 GB RAM dari 10 VM)
+     * - 2 TB Storage (2.000.000 MB)
+     * - 10 Gbps Bandwidth (10.000 Mbps)
+     * - VmSchedulerSpaceShared (alokasi core dedicated non-preemptive)
      */
-    private static Datacenter createDatacenter(CloudSimPlus simulation) {
-        List<Host> hostList = new ArrayList<>();
-
-        // Host 0 & 1 (2 unit)
-        for (int i = 0; i < 2; i++) {
+    private static List<Host> createHostList(int startId, int count) {
+        List<Host> list = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
             List<Pe> peList = new ArrayList<>();
-            for (int p = 0; p < 8; p++) {
-                peList.add(new PeSimple(10000));
+            for (int p = 0; p < HOST_PES; p++) {
+                peList.add(new PeSimple(HOST_MIPS));
             }
-            Host host = new HostSimple(32768, 10000, 1000000, peList);
+            Host host = new HostSimple(HOST_RAM_MB, HOST_BW_MBPS, HOST_STORAGE_MB, peList);
+            host.setId(startId + i);
             host.setVmScheduler(new VmSchedulerSpaceShared());
-            hostList.add(host);
+            list.add(host);
         }
-
-        // Host 2 & 3 (2 unit)
-        for (int i = 2; i < 4; i++) {
-            List<Pe> peList = new ArrayList<>();
-            for (int p = 0; p < 16; p++) {
-                peList.add(new PeSimple(20000));
-            }
-            Host host = new HostSimple(65536, 10000, 2000000, peList);
-            host.setVmScheduler(new VmSchedulerSpaceShared());
-            hostList.add(host);
-        }
-
-        return new DatacenterSimple(simulation, hostList);
+        return list;
     }
 
-    /**
-     * Implementasi Lengkap Algoritma TOPSIS Multi-Kriteria:
-     * Menyeimbangkan Completion Time dan Execution Cost dengan bobot w_time = 0.5, w_cost = 0.5.
-     */
-    private static int[] scheduleTasksTopsis(List<TaskItem> tasks, List<VmSpec> vms, double wTime, double wCost) {
+    // ─────────────────────────────────────────────────────────────
+    // 5. IMPLEMENTASI MULTI-KRITERIA TOPSIS DENGAN ANTREAN PER PE
+    // ─────────────────────────────────────────────────────────────
+
+    static int[] scheduleTasksTopsis(List<TaskItem> tasks, List<VmSpec> vms, double wTime, double wCost) {
         int numVms = vms.size();
-        double[] predictedReadyTime = new double[numVms];
+        double[][] peReadyTimes = new double[numVms][];
+        int[] assignedTaskCounts = new int[numVms];
+        for (int index = 0; index < numVms; index++) {
+            peReadyTimes[index] = new double[vms.get(index).type.pes];
+        }
+        List<Integer> taskOrder = new ArrayList<>();
+        for (int index = 0; index < tasks.size(); index++) taskOrder.add(index);
+        taskOrder.sort(Comparator.comparing(tasks::get, TASK_ORDER));
         int[] assignments = new int[tasks.size()];
 
-        for (int tIdx = 0; tIdx < tasks.size(); tIdx++) {
+        for (int tIdx : taskOrder) {
             TaskItem task = tasks.get(tIdx);
             double[][] matrix = new double[numVms][2];
 
-            // Hitung Completion Time dan Cost untuk setiap calon VM
             for (int j = 0; j < numVms; j++) {
                 VmSpec vm = vms.get(j);
-                double execTime = (task.lengthMi / vm.mips) + (task.ioBytes / vm.bwBytesPerSec);
-                double compTime = predictedReadyTime[j] + execTime;
-                double cost = execTime * (vm.hourlyRate / 3600.0);
+                double execTime = executionTime(task, vm.type);
+                double compTime = Math.max(task.arrivalTime, peReadyTimes[j][earliestPe(peReadyTimes[j])]) + execTime;
+                double cost = execTime * (vm.type.hourlyRate / SECONDS_PER_HOUR);
 
                 matrix[j][0] = compTime;
                 matrix[j][1] = cost;
             }
 
-            // 1. Normalisasi Matriks Keputusan (Vektor Normalization)
+            // Normalisasi Matriks Keputusan (Vektor Normalization)
             double sumSqTime = 0.0;
             double sumSqCost = 0.0;
             for (int j = 0; j < numVms; j++) {
@@ -314,221 +507,186 @@ public class TopsisCloudSim {
             double normTime = Math.sqrt(sumSqTime);
             double normCost = Math.sqrt(sumSqCost);
 
-            double[][] weightedMatrix = new double[numVms][2];
+            double[][] weighted = new double[numVms][2];
             for (int j = 0; j < numVms; j++) {
-                weightedMatrix[j][0] = (normTime > 0 ? (matrix[j][0] / normTime) : 0.0) * wTime;
-                weightedMatrix[j][1] = (normCost > 0 ? (matrix[j][1] / normCost) : 0.0) * wCost;
+                weighted[j][0] = (normTime > 0 ? (matrix[j][0] / normTime) : 0.0) * wTime;
+                weighted[j][1] = (normCost > 0 ? (matrix[j][1] / normCost) : 0.0) * wCost;
             }
 
-            // 2. Tentukan Solusi Ideal Positif (A+) dan Solusi Ideal Negatif (A-)
-            // Keduanya adalah cost criteria: nilai minimum adalah yang terbaik
+            // Solusi Ideal Positif (A+) dan Solusi Ideal Negatif (A-) [Cost Criteria: nilai minimum terbaik]
             double aPlusTime = Double.MAX_VALUE;
             double aPlusCost = Double.MAX_VALUE;
             double aMinusTime = -Double.MAX_VALUE;
             double aMinusCost = -Double.MAX_VALUE;
 
             for (int j = 0; j < numVms; j++) {
-                if (weightedMatrix[j][0] < aPlusTime) aPlusTime = weightedMatrix[j][0];
-                if (weightedMatrix[j][1] < aPlusCost) aPlusCost = weightedMatrix[j][1];
+                if (weighted[j][0] < aPlusTime) aPlusTime = weighted[j][0];
+                if (weighted[j][1] < aPlusCost) aPlusCost = weighted[j][1];
 
-                if (weightedMatrix[j][0] > aMinusTime) aMinusTime = weightedMatrix[j][0];
-                if (weightedMatrix[j][1] > aMinusCost) aMinusCost = weightedMatrix[j][1];
+                if (weighted[j][0] > aMinusTime) aMinusTime = weighted[j][0];
+                if (weighted[j][1] > aMinusCost) aMinusCost = weighted[j][1];
             }
 
-            // 3. Hitung Jarak Euclidean ke Solusi Ideal
+            // Jarak Euclidean & Skor Kedekatan Relatif
             double maxScore = -1.0;
-            int bestVmId = 0;
+            int bestVmIndex = 0;
 
             for (int j = 0; j < numVms; j++) {
-                double diffPlusTime = weightedMatrix[j][0] - aPlusTime;
-                double diffPlusCost = weightedMatrix[j][1] - aPlusCost;
+                double diffPlusTime = weighted[j][0] - aPlusTime;
+                double diffPlusCost = weighted[j][1] - aPlusCost;
                 double dPlus = Math.sqrt(diffPlusTime * diffPlusTime + diffPlusCost * diffPlusCost);
 
-                double diffMinusTime = weightedMatrix[j][0] - aMinusTime;
-                double diffMinusCost = weightedMatrix[j][1] - aMinusCost;
+                double diffMinusTime = weighted[j][0] - aMinusTime;
+                double diffMinusCost = weighted[j][1] - aMinusCost;
                 double dMinus = Math.sqrt(diffMinusTime * diffMinusTime + diffMinusCost * diffMinusCost);
 
-                // 4. Skor Kedekatan Relatif
                 double score = dMinus / (dPlus + dMinus + 1e-9);
 
-                // 5. Pilih alternatif dengan skor kedekatan tertinggi
-                if (score > maxScore) {
+                // Equal TOPSIS scores: distribute tasks before using index order.
+                if (score > maxScore || (score == maxScore
+                        && assignedTaskCounts[j] < assignedTaskCounts[bestVmIndex])) {
                     maxScore = score;
-                    bestVmId = j;
+                    bestVmIndex = j;
                 }
             }
 
-            assignments[tIdx] = bestVmId;
+            assignments[tIdx] = bestVmIndex;
+            assignedTaskCounts[bestVmIndex]++;
 
-            // Perbarui waktu siap VM terpilih untuk task berikutnya
-            VmSpec chosenVm = vms.get(bestVmId);
-            double execTime = (task.lengthMi / chosenVm.mips) + (task.ioBytes / chosenVm.bwBytesPerSec);
-            predictedReadyTime[bestVmId] += execTime;
+            // Perbarui estimasi waktu siap VM untuk task berikutnya
+            int peIndex = earliestPe(peReadyTimes[bestVmIndex]);
+            peReadyTimes[bestVmIndex][peIndex] = matrix[bestVmIndex][0];
         }
 
         return assignments;
     }
 
-    /**
-     * Memuat dataset riil Google Cloud Jobs (GoCJ_Dataset_1000.csv)
-     */
-    private static List<TaskItem> loadGocjWorkload(int nTasks, long seed) {
-        Random rand = new Random(seed);
-        File datasetFile = findGocjDatasetFile(nTasks);
-        List<TaskItem> list = new ArrayList<>();
+    // ─────────────────────────────────────────────────────────────
+    // 6. LOADER WORKLOAD RESMI GOCJ (GOOGLE CLOUD JOBS)
+    // ─────────────────────────────────────────────────────────────
 
-        if (datasetFile != null && datasetFile.exists()) {
-            try (BufferedReader br = new BufferedReader(new FileReader(datasetFile))) {
-                String line;
-                int count = 0;
-                while ((line = br.readLine()) != null && count < nTasks) {
-                    String[] parts = line.trim().split(",");
-                    if (parts.length >= 3) {
-                        double length = Double.parseDouble(parts[0].trim());
-                        int sla = Integer.parseInt(parts[1].trim());
-                        double arrival = Double.parseDouble(parts[2].trim());
-                        double ioMb = 50.0 + rand.nextDouble() * (500.0 - 50.0);
-                        double ioBytes = ioMb * 1024.0 * 1024.0;
+    private static int earliestPe(double[] readyTimes) {
+        int earliest = 0;
+        for (int index = 1; index < readyTimes.length; index++) {
+            if (readyTimes[index] < readyTimes[earliest]) earliest = index;
+        }
+        return earliest;
+    }
 
-                        list.add(new TaskItem(count, length, sla, arrival, ioBytes));
-                        count++;
+    static List<TaskItem> loadGocjWorkload(Path dataset, int expectedTasks, long seed) {
+        Random random = new Random(seed);
+        List<TaskItem> tasks = new ArrayList<>();
+        try (BufferedReader reader = Files.newBufferedReader(dataset, StandardCharsets.UTF_8)) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                String[] columns = line.trim().split(",", -1);
+                try {
+                    if (columns.length != 3) throw new IllegalArgumentException("Harus tepat tiga kolom");
+                    double length = Double.parseDouble(columns[0].trim());
+                    int sla = Integer.parseInt(columns[1].trim());
+                    double arrival = Double.parseDouble(columns[2].trim());
+                    if (!Double.isFinite(length) || length <= 0 || length > Long.MAX_VALUE / 2.0
+                            || sla < 1 || sla > 3 || !Double.isFinite(arrival) || arrival < 0) {
+                        throw new IllegalArgumentException("Length harus positif dan finite, SLA 1–3, arrival nonnegatif dan finite");
                     }
+                    double ioBytes = (50 + random.nextDouble() * 450) * BYTES_PER_MB;
+                    tasks.add(new TaskItem(tasks.size(), length, sla, arrival, ioBytes));
+                } catch (IllegalArgumentException error) {
+                    throw new IllegalArgumentException(dataset + ": baris " + lineNumber + ": " + error.getMessage(), error);
                 }
-                System.out.printf("  [GoCJ Loader] Berhasil memuat %d tasks dari file real trace: %s\n", list.size(), datasetFile.getName());
-            } catch (IOException | NumberFormatException e) {
-                System.err.println("Gagal membaca GoCJ dataset file: " + e.getMessage() + ". Menggunakan fallback sintetis.");
             }
-        } else {
-            System.err.println("  [GoCJ Loader WARNING] File GoCJ dataset tidak ditemukan, beralih ke generator sintetis.");
+        } catch (IOException error) {
+            throw new UncheckedIOException("Gagal membaca dataset wajib: " + dataset, error);
         }
-
-        // Jika baris file belum mencukupi, lengkapi dengan sintetis
-        while (list.size() < nTasks) {
-            int idx = list.size();
-            double length = 1000.0 + rand.nextDouble() * (50000.0 - 1000.0);
-            double ioMb = 50.0 + rand.nextDouble() * (500.0 - 50.0);
-            list.add(new TaskItem(idx, length, 1, 0.0, ioMb * 1024.0 * 1024.0));
+        if (tasks.size() != expectedTasks) {
+            throw new IllegalArgumentException(dataset + ": jumlah task " + tasks.size() + ", wajib " + expectedTasks);
         }
-
-        return list;
+        tasks.sort(TASK_ORDER);
+        return List.copyOf(tasks);
     }
 
-    /**
-     * Generator Beban Kerja Sintetis:
-     * - 'uniform': Panjang 1.000 - 50.000 MI, I/O 50 - 500 MB
-     * - 'normal' : Mean 25.500 MI (std 8.000), I/O Mean 275 MB (std 75)
-     */
-    private static List<TaskItem> generateSyntheticWorkload(int nTasks, String distribution, long seed) {
-        Random rand = new Random(seed);
-        List<TaskItem> list = new ArrayList<>();
-
-        for (int i = 0; i < nTasks; i++) {
-            double length;
-            double ioMb;
-
-            if ("normal".equalsIgnoreCase(distribution)) {
-                length = 25500.0 + rand.nextGaussian() * 8000.0;
-                length = Math.max(1000.0, Math.min(50000.0, length));
-
-                ioMb = 275.0 + rand.nextGaussian() * 75.0;
-                ioMb = Math.max(50.0, Math.min(500.0, ioMb));
-            } else { // default 'uniform'
-                length = 1000.0 + rand.nextDouble() * (50000.0 - 1000.0);
-                ioMb = 50.0 + rand.nextDouble() * (500.0 - 50.0);
+    private static Path findProjectRoot() {
+        Path directory = Path.of("").toAbsolutePath().normalize();
+        while (directory != null) {
+            if (Files.isRegularFile(directory.resolve("java/build.gradle")) && Files.isDirectory(directory.resolve("docs"))) {
+                return directory;
             }
-
-            double ioBytes = ioMb * 1024.0 * 1024.0;
-            list.add(new TaskItem(i, length, 1, 0.0, ioBytes));
+            directory = directory.getParent();
         }
-        return list;
+        throw new IllegalStateException("Jalankan program dari direktori proyek atau subdirektorinya");
     }
 
-    /**
-     * Mencari path file dataset GoCJ
-     */
-    private static File findGocjDatasetFile(int nTasks) {
-        String[] dirCandidates = {
-            "gocj_dataset",
-            "../gocj_dataset",
-            "../../gocj_dataset",
-            "D:/main/Documents/kuliah/sem5/SOKA/task-4/gocj_dataset",
-            "D:/main/Documents/kuliah/sem5/SOKA/gocj_dataset"
-        };
-        // 1. Coba file spesifik jumlah task: GoCJ_Dataset_{nTasks}.csv
-        for (String dir : dirCandidates) {
-            File f = new File(dir, "GoCJ_Dataset_" + nTasks + ".csv");
-            if (f.exists()) {
-                return f;
-            }
+    // ─────────────────────────────────────────────────────────────
+    // 7. CETAK TABEL & EKSPOR CSV KE FOLDER DOCS/
+    // ─────────────────────────────────────────────────────────────
+
+    private static void printAllocationArchitectureTable() {
+        System.out.println("Tabel Arsitektur Pemetaan Virtual Machine ke Physical Host:");
+        System.out.println("+---------------+--------------+-------------+---------------------------+------------+-------------+");
+        System.out.println("| Datacenter    | PhysicalHost | Range VM ID | Komposisi Tipe VM (10 VM) | Total vCPU | Total RAM   |");
+        System.out.println("+---------------+--------------+-------------+---------------------------+------------+-------------+");
+        for (int hostId = 0; hostId < HOST_COUNT; hostId++) {
+            final int selectedHost = hostId;
+            List<VmSpec> specs = ALL_VM_SPECS.stream().filter(spec -> spec.hostId == selectedHost).toList();
+            int pes = specs.stream().mapToInt(spec -> spec.type.pes).sum();
+            long ram = specs.stream().mapToLong(spec -> spec.type.ramMb).sum();
+            String composition = Arrays.stream(VmType.values())
+                    .map(type -> VMS_PER_TYPE_PER_HOST[type.ordinal()] + " " + type.label)
+                    .collect(java.util.stream.Collectors.joining(", "));
+            System.out.printf("| Datacenter %-2d | Host %-7d | VM %02d - %02d  | %-25s | %-10d | %-11d |%n",
+                    hostId / HOSTS_PER_DATACENTER + 1, hostId, specs.get(0).id,
+                    specs.get(specs.size() - 1).id, composition, pes, ram);
         }
-        // 2. Fallback ke file master 1000 tasks: GoCJ_Dataset_1000.csv
-        for (String dir : dirCandidates) {
-            File f = new File(dir, "GoCJ_Dataset_1000.csv");
-            if (f.exists()) {
-                return f;
-            }
-        }
-        return null;
+        System.out.println("+---------------+--------------+-------------+---------------------------+------------+-------------+");
+        System.out.printf("Host: %d PE @ %.0f MIPS | %d MB RAM | %d MB Storage | %d Mbps BW%n%n",
+                HOST_PES, HOST_MIPS, HOST_RAM_MB, HOST_STORAGE_MB, HOST_BW_MBPS);
     }
 
-    /**
-     * Menampilkan tabel hasil simulasi yang terformat rapi
-     */
-    private static void printResultTable(String title, List<SimulationResult> results) {
-        System.out.println("--- " + title + " ---");
-        System.out.printf("%-8s %-16s %-16s %-12s %-14s\n", "Tasks", "Makespan (s)", "Total Cost ($)", "DI", "Runtime (ms)");
-        for (SimulationResult r : results) {
-            System.out.printf("%-8d %-16.6f %-16.2f %-12.6f %-14.4f\n",
-                    r.nTasks, r.makespan, r.totalCost, r.degreeOfImbalance, r.algoRuntimeMs);
+    private static void printFinalSummaryTable(List<AggregatedResult> results) {
+        System.out.println("\n=========================================================================================");
+        System.out.printf("  RINGKASAN TOPSIS (MEAN \u00b1 STD DEV SAMPEL, %d RUNS)%n", RUNS_PER_SCALE);
+        System.out.println("=========================================================================================");
+        System.out.printf("%-8s %-24s %-20s %-20s %-20s\n", "Tasks", "Makespan (s)", "Total Cost ($)", "DI", "Runtime (ms)");
+        System.out.println("-----------------------------------------------------------------------------------------");
+        for (AggregatedResult r : results) {
+            System.out.printf(Locale.US, "%-8d %10.2f \u00b1 %-8.2f %8.2f \u00b1 %-8.2f %8.4f \u00b1 %-8.4f %8.2f \u00b1 %-8.2f\n",
+                    r.nTasks, r.meanMakespan, r.stdMakespan, r.meanCost, r.stdCost, r.meanDi, r.stdDi, r.meanRuntimeMs, r.stdRuntimeMs);
         }
-        System.out.println();
+        System.out.println("=========================================================================================");
     }
-    /**
-     * Ekspor metrik evaluasi ke file CSV
-     */
-    private static void exportResultsToCsv(List<SimulationResult> results) {
-        File targetDir = getExportDir();
-        File csvFile = new File(targetDir, "cloudsim_metrics.csv");
-        try (java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileWriter(csvFile))) {
-            pw.println("Workload,Tasks,Makespan_s,TotalCost_USD,DI,Runtime_ms");
-            for (SimulationResult r : results) {
-                pw.printf(Locale.US, "%s,%d,%.6f,%.2f,%.6f,%.4f\n",
-                        r.workload, r.nTasks, r.makespan, r.totalCost, r.degreeOfImbalance, r.algoRuntimeMs);
+
+    private static void exportMetricsCsv(Path targetDir, List<SingleRunResult> runs) {
+        File csvFile = targetDir.resolve("cloudsim_metrics.csv").toFile();
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(csvFile.toPath(), StandardCharsets.UTF_8))) {
+            pw.println("Workload,Tasks,Run,Makespan_s,TotalCost_USD,DI,Runtime_ms");
+            for (SingleRunResult r : runs) {
+                pw.printf(Locale.US, "GoCJ (Real Trace),%d,%d,%.6f,%.2f,%.6f,%.4f\n",
+                        r.nTasks, r.runId, r.makespan, r.totalCost, r.degreeOfImbalance, r.algoRuntimeMs);
             }
-            System.out.println("Data metrik berhasil diekspor ke: " + csvFile.getAbsolutePath());
+            if (pw.checkError()) throw new IOException("Gagal menulis " + csvFile);
+            System.out.println("[EXPORT] Data metrik berhasil diekspor ke: " + csvFile.getAbsolutePath());
         } catch (IOException e) {
-            System.err.println("Gagal mengekspor metrics CSV: " + e.getMessage());
+            throw new UncheckedIOException("Gagal mengekspor metrics CSV", e);
         }
     }
 
-    /**
-     * Ekspor distribusi alokasi VM ke file CSV untuk 1000 tasks
-     */
-    private static void exportVmDistributionCsv(SimulationResult res1000) {
-        File targetDir = getExportDir();
-        File csvFile = new File(targetDir, "cloudsim_vm_allocation_1000.csv");
-        try (java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileWriter(csvFile))) {
-            pw.println("VmId,VmType,Mips,HourlyRate,BusyTime_s,TaskCount");
-            for (int i = 0; i < VM_SPECS.size(); i++) {
-                VmSpec spec = VM_SPECS.get(i);
-                pw.printf(Locale.US, "%d,%s,%.0f,%.2f,%.2f,%d\n",
-                        spec.id, spec.type, spec.mips, spec.hourlyRate,
-                        res1000.vmBusyTimes[i], res1000.vmTaskCounts[i]);
+    private static void exportVmAllocationCsv(Path targetDir, SingleRunResult runResult) {
+        File csvFile = targetDir.resolve("cloudsim_vm_allocation.csv").toFile();
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(csvFile.toPath(), StandardCharsets.UTF_8))) {
+            pw.println("DatacenterId,HostId,VmId,VmType,Mips,HourlyRate,BusyTime_s,TaskCount");
+            for (int i = 0; i < ALL_VM_SPECS.size(); i++) {
+                VmSpec spec = ALL_VM_SPECS.get(i);
+                pw.printf(Locale.US, "DC_%d,Host_%d,%d,%s,%.0f,%.2f,%.2f,%d\n",
+                        spec.dcId + 1, spec.hostId, spec.id, spec.type.label, spec.type.mips,
+                        spec.type.hourlyRate, runResult.vmBusyTimes[i], runResult.vmTaskCounts[i]);
             }
-            System.out.println("Data distribusi VM berhasil diekspor ke: " + csvFile.getAbsolutePath());
+            if (pw.checkError()) throw new IOException("Gagal menulis " + csvFile);
+            System.out.println("[EXPORT] Data alokasi 80 VM berhasil diekspor ke: " + csvFile.getAbsolutePath());
         } catch (IOException e) {
-            System.err.println("Gagal mengekspor VM allocation CSV: " + e.getMessage());
+            throw new UncheckedIOException("Gagal mengekspor VM allocation CSV", e);
         }
     }
 
-    private static File getExportDir() {
-        String[] candidates = {"docs", "../docs", "task-4/docs"};
-        for (String c : candidates) {
-            File dir = new File(c);
-            if (dir.exists() && dir.isDirectory()) {
-                return dir;
-            }
-        }
-        return new File(".");
-    }
 }

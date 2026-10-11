@@ -25,8 +25,22 @@ java {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    options.release = 17
 }
 
 tasks.named('run') {
     jvmArgs = ['--add-opens', 'java.base/java.lang=ALL-UNNAMED', '--add-opens', 'java.base/java.util=ALL-UNNAMED']
+}
+
+// Regression checks without adding a test framework dependency.
+tasks.register('verifySimulation', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.soka.kelompok5.TopsisCloudSimVerification'
+}
+
+tasks.named('test') {
+    // Checks run in the executable above, so no JUnit tests are discovered.
+    failOnNoDiscoveredTests = false
+    dependsOn verifySimulation
 }
