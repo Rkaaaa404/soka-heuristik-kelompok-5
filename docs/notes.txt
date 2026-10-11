@@ -1,0 +1,21 @@
+Kekurangan saat Demo
+Tidak memahami pemetaan VM ke Host di CloudSim: Saat diminta menunjukkan kode alokasi VM ke host fisik, kamu kebingungan dan sempat mengira VM bersifat standalone. Faktanya di CloudSim, hierarki wajibnya adalah Datacenter $\rightarrow$ Host $\rightarrow$ VM.
+Alokasi Host timpang (Blackbox): Dari log eksekusi, seluruh 10 VM (VM 0–9) hanya menumpuk di Host 2 dan Host 3, sementara Host 0 dan Host 1 kosong/menganggur. Kamu tidak tahu mekanisme mengapa pembagian tersebut terjadi, sehingga dosen menilai kodenya dibuat lewat AI tanpa dipahami alurnya.
+Tertukar konsep homogen dan heterogen: Kamu menyebut spesifikasi VM disamakan sehingga disebut heterogen, yang langsung dikoreksi dosen karena spesifikasi yang sama adalah definisi homogen.
+Rancu mengenai karakteristik dataset: Saat ditanya apakah task pada dataset Google Cloud Jobs bersifat independen atau dependen, kamu ragu-ragu dan mengaitkannya dengan SLA (Service Level Agreement). Ketika dicek, SLA di situ ternyata merujuk ke level of priority, bukan relasi ketergantungan antar-task.
+Cakupan pengujian dataset masih minim: Pengujian baru dijalankan pada dataset 1.000 task saja dan hanya dijalankan satu kali.
+
+Permintaan dan Revisi dari Dosen
+
+1. Pahami dan petakan arsitektur VM ke Host:
+   - Buat skenario dengan 2 Data Center.
+   - Atur alokasi VM ke host secara terstruktur dan masuk akal (misalnya 1 Data Center berisi 4 host, dan masing-masing host menampung 10 VM heterogen sehingga total 40 VM per Data Center).
+   - Kuasai detail pemetaan saat demo ulang: VM 0 sampai VM 9 berada di host mana, lengkap dengan rincian spesifikasi tiap VM. Pastikan tidak ada host yang menganggur tanpa alasan.
+2. Perluas pengujian dataset (Running berulang):
+   - Jalankan pengujian Google Cloud Jobs mulai dari ukuran 1.000, 2.000, hingga 10.000 task (dosen meminta menanyakan file 10.000 task ke kelompok lain jika belum punya).
+   - Tiap variasi ukuran task (1.000, 2.000, dst. sampai 10.000) wajib di-running sebanyak 3 kali untuk melihat konsistensi hasilnya.
+3. Pahami karakteristik data: Pelajari kembali dokumentasi dataset Google Cloud Jobs untuk memastikan apakah task-nya dependen atau independen tanpa tertukar dengan parameter prioritas.
+4. Kewajiban administratif & jadwal:
+   - Upload rekaman sesi presentasi ke YouTube dengan visibilitas unlisted.
+   - Kumpulkan link rekaman bersama rangkuman poin revisi yang diberikan.
+   - Segera daftar/ambil slot jadwal untuk demo ulang minggu depan.
