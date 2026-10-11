@@ -12,12 +12,12 @@ import java.util.Random;
 
 /**
  * ==============================================================================
- * GoCJGenerator (Official GoCJ Monte Carlo Trace Generator)
+ * GoCJGenerator (Adaptasi Generator Enhanced GoCJ)
  * ==============================================================================
- * Mengimplementasikan Algoritma 1 dari publikasi ilmiah resmi:
+ * Mengadaptasi generator Enhanced GoCJ yang dipublikasikan bersama dataset:
  * "GoCJ: Google Cloud Jobs Dataset for Distributed and Cloud Computing Infrastructures"
  * (Hussain & Aleem, MDPI Data 2018; Mendeley Data b7bp6xhrcd/1)
- * serta spesifikasi Enhanced GoCJ:
+ * serta:
  * "Enhanced GoCJ: Google Cloud Jobs Dataset with SLA Classes and Arrival Times"
  * (Nawaz, Hussain, Khattak, Mendeley Data r93dfjvvv6/5).
  *
@@ -56,7 +56,7 @@ public class GoCJGenerator {
     }
 
     /**
-     * Membaca 50 nilai seed ukuran job dari Original_DataSet.txt.
+     * Membaca 50 nilai seed ukuran job dari Original_Enhanced_Dataset.txt.
      */
     public void loadSeedDataset(File seedFile) throws IOException {
         seedJobSizes.clear();
@@ -159,8 +159,6 @@ public class GoCJGenerator {
      */
     public static File findSeedFile() {
         String[] candidates = {
-            "gocj_dataset/Original_DataSet.txt",
-            "../gocj_dataset/Original_DataSet.txt",
             "gocj_dataset/Original_Enhanced_Dataset.txt",
             "../gocj_dataset/Original_Enhanced_Dataset.txt"
         };
@@ -195,7 +193,7 @@ public class GoCJGenerator {
     public static void main(String[] args) throws Exception {
         File seedFile = findSeedFile();
         if (seedFile == null) {
-            System.err.println("[ERROR] File basis distribusi Original_DataSet.txt tidak ditemukan!");
+            System.err.println("[ERROR] File seed Original_Enhanced_Dataset.txt tidak ditemukan!");
             System.exit(1);
         }
 
@@ -221,6 +219,6 @@ public class GoCJGenerator {
             System.out.println("  -> Berhasil dibuat: " + outFile.getName() + " (" + outFile.length() + " bytes)");
         }
 
-        System.out.println("[GoCJGenerator] Seluruh dataset GoCJ skala 1.000 s/d 10.000 tasks siap digunakan.");
+        System.out.println("[GoCJGenerator] Dataset GoCJ skala 7.000 s/d 10.000 tasks berhasil dibangkitkan.");
     }
 }

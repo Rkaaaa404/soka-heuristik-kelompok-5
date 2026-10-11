@@ -245,7 +245,7 @@ def plot_vm_workload_distribution(df_vm):
 def main():
     print("=========================================================================")
     print("  VISUALISASI HASIL SIMULASI CLOUDSIM PLUS & PENJADWALAN TOPSIS (SOKA 5) ")
-    print("  Dataset: GoCJ Real Trace 1.000 s/d 10.000 Tasks (3x Repeated Runs)    ")
+    print("  Dataset: GoCJ 1.000 s/d 10.000 Tasks (3x Repeated Runs)               ")
     print("  Arsitektur: 2 Datacenter, 8 Physical Hosts, 80 Heterogeneous VMs      ")
     print("=========================================================================\n")
 

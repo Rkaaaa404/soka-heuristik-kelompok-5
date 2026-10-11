@@ -25,7 +25,7 @@
 >
 > *Untuk menghapus kelemahan alokasi blackbox sebelumnya, kami menerapkan **pemetaan deterministik transparan** di mana Host 0–3 menampung VM 0–39 di Datacenter 1, dan Host 4–7 menampung VM 40–79 di Datacenter 2. Seluruh host terbukti aktif memproses beban kerja tanpa ada host yang menganggur.*
 >
-> *Penjadwalan dioptimasi menggunakan algoritma multi-kriteria **TOPSIS** dengan bobot seimbang ($w_{\text{time}} = 0.5, w_{\text{cost}} = 0.5$) untuk meminimalkan Makespan dan Total Biaya Sewa secara simultan. Kami menguji performa sistem menggunakan trace riil **Google Cloud Jobs (GoCJ)** dari skala **1.000 hingga 10.000 tasks** yang dieksekusi masing-masing **3 kali repeated runs** untuk menjamin konsistensi statistik."*
+> *Penjadwalan dioptimasi menggunakan algoritma multi-kriteria **TOPSIS** dengan bobot seimbang ($w_{\text{time}} = 0.5, w_{\text{cost}} = 0.5$) untuk meminimalkan Makespan dan Total Biaya Sewa secara simultan. Kami menguji performa sistem menggunakan benchmark realistis **Google Cloud Jobs (GoCJ)** dari skala **1.000 hingga 10.000 tasks** yang dieksekusi masing-masing **3 kali repeated runs** untuk mengamati variasi hasil."*
 
 ---
 
@@ -35,12 +35,19 @@ Berdasarkan lembar catatan evaluasi Demo 1 (`docs/notes.txt`), berikut rangkuman
 
 | Poin Evaluasi Dosen | Masalah Saat Demo 1 | Solusi & Status Revisi pada Demo Ulang | Bukti di Kode / Dokumen |
 |---|---|---|---|
-| **1. Pemetaan VM ke Host** | Tidak memahami alokasi VM ke Host; mengira VM standalone. | Membangun hierarki penuh: Datacenter $\rightarrow$ Host $\rightarrow$ VM. Dibuat 2 Datacenter dan 8 Host dengan alokasi tepat 10 VM/host. | `TopsisCloudSim.java` baris 260–335 & Tabel Arsitektur |
+| **1. Pemetaan VM ke Host** | Tidak memahami alokasi VM ke Host; mengira VM standalone. | Membangun hierarki penuh: Datacenter $\rightarrow$ Host $\rightarrow$ VM. Dibuat 2 Datacenter dan 8 Host dengan alokasi tepat 10 VM/host. | Method `buildVmSpecs()`, `createBroker()`, `validateVmAllocation()` & Tabel Arsitektur |
 | **2. Alokasi Host Timpang (Blackbox)** | Seluruh VM menumpuk di Host 2 dan 3; Host 0 dan 1 kosong/menganggur. | Mengimplementasikan custom `hostSelector` pada `VmAllocationPolicySimple` dan broker Datacenter mapper. Tidak ada host menganggur (~1.250 task/host). | `cloudsim_vm_allocation.csv` & `cloudsim_datacenter_host_distribution.png` |
 | **3. Tertukar Konsep Homogen vs Heterogen** | Menyebut spesifikasi disamakan sebagai heterogen. | Klarifikasi tegas: **Host bersifat Homogen** (spesifikasi fisik sama), **VM bersifat Heterogen** (3 kelas: Small, Medium, Large). | Dokumen ini (Bab 3 & 8) dan `docs/Kelompok 5_Design Project.md` |
 | **4. Karakteristik Dataset (Independent vs DAG)** | Ragu-ragu dan mengira kolom SLA adalah dependensi task. | Menjelaskan secara ilmiah bahwa GoCJ adalah **Independent Tasks** (Bag-of-Tasks). Kolom SLA adalah **Service Level Agreement** (Prioritas: 1=Low, 2=Medium, 3=High). | Dokumen ini (Bab 4) & `GoCJGenerator.java` |
 | **5. Cakupan Pengujian Minim** | Pengujian hanya pada 1.000 task dan dijalankan 1 kali saja. | Memperluas pengujian dari **1.000 hingga 10.000 tasks** (10 skala ukuran), masing-masing dijalankan **3 kali pengulangan (total 30 run)** dengan analisis Mean $\pm$ Std Dev. | `cloudsim_metrics.csv` & `cloudsim_evaluation_metrics.png` |
 | **6. Perbandingan SimPy Membingungkan** | SimPy membingungkan evaluasi dan tidak fokus. | **Menghapus SimPy sepenuhnya**; fokus 100% pada CloudSim Plus (Java) sebagai engine simulasi dan Python murni untuk visualisasi data. | `python/visualize_cloudsim.py` & `kelompok_5_TOPSIS.ipynb` |
+
+### Checklist Administratif sebelum Demo Ulang
+- [ ] Upload rekaman sesi presentasi ke YouTube dengan visibilitas **unlisted**.
+- [ ] Kumpulkan URL rekaman bersama rangkuman revisi pada tabel di atas.
+- [ ] Daftar dan catat tanggal, jam, serta slot demo ulang.
+
+Status tetap belum selesai sampai ketiga bukti administratif tersebut terisi; jangan menandainya selesai tanpa URL atau konfirmasi jadwal.
 
 ---
 
@@ -98,10 +105,16 @@ Mekanisme ini menjamin alokasi 100% transparan, terprediksi, dan terdokumentasi 
 ## 4. Karakteristik Ilmiah Dataset GoCJ (Independent vs Dependent)
 
 ### A. Independent Tasks (Bag-of-Tasks / Meta-Tasks)
-- Dataset **Google Cloud Jobs (GoCJ)** adalah sekumpulan task independen yang diekstraksi dari trace klaster Google nyata (Hussain & Aleem, MDPI 2018; Mendeley Data `b7bp6xhrcd/1` & `r93dfjvvv6/5`).
+- Dataset **Google Cloud Jobs (GoCJ)** adalah benchmark realistis yang diturunkan dari karakteristik workload Google cluster (Hussain & Aleem, MDPI 2018; Mendeley Data `b7bp6xhrcd/1` & `r93dfjvvv6/5`).
 - Setiap task merepresentasikan job komputasi mandiri. Tidak ada *data dependency*, tidak ada graph precedence, dan tidak ada task yang harus menunggu task lain selesai sebelum mulai dieksekusi.
 
-### B. Arti Kolom SLA (Bukan Task Dependency!)
+### B. GoCJ Asli vs Enhanced GoCJ
+- **GoCJ asli:** setiap baris hanya berisi ukuran job dalam MI.
+- **Enhanced GoCJ:** menambahkan SLA class dan arrival time sehingga setiap baris memiliki tiga kolom.
+- Proyek ini memakai format **Enhanced GoCJ**, tetapi label workload pada tabel dan grafik cukup ditulis **GoCJ**. SLA disimpan sebagai metadata dan tidak menjadi kriteria TOPSIS.
+- Dataset 7.000–10.000 task dibangkitkan dengan adaptasi generator Enhanced GoCJ dan seed `Original_Enhanced_Dataset.txt`.
+
+### C. Arti Kolom SLA (Bukan Task Dependency!)
 Setiap file CSV GoCJ memiliki 3 kolom angka tanpa header:
 Contoh baris: `83000, 2, 3`
 1. **Kolom 1: Task Length / Job Size (Satuan: MI — Million Instructions)**  
@@ -115,7 +128,7 @@ Contoh baris: `83000, 2, 3`
 3. **Kolom 3: Arrival Time (Satuan: Detik)**  
    Waktu kedatangan task ke broker cloud mengikuti proses Poisson non-homogen.
 
-### C. Perbandingan Ilmiah dengan Dependent Tasks (Scientific Workflows)
+### D. Perbandingan Ilmiah dengan Dependent Tasks (Scientific Workflows)
 - **Dependent Tasks:** Dimodelkan sebagai **Directed Acyclic Graph (DAG)** berformat XML/DAX (seperti *Pegasus Scientific Workflows*: Montage astronomi, CyberShake gempa bumi, Epigenomics genomika).
 - Task dependen memiliki relasi orang tua-anak (*parent-child*), memerlukan workflow engine khusus (misal algoritma HEFT pada *WorkflowSim*).
 - Penjadwalan TOPSIS pada proyek Kelompok 5 berfokus pada **multi-criteria independent batch scheduling** pada simulator standar industri *CloudSim Plus*.
@@ -182,7 +195,7 @@ TOPSIS (*Technique for Order Preference by Similarity to Ideal Solution*) mengev
    $$\text{DI} = \frac{T_{\max} - T_{\min}}{T_{\text{avg}}}$$
    `T_j` adalah BusyTime VM, termasuk nilai nol pada VM tanpa task. Makespan memasukkan waktu tunggu kedatangan; DI tidak memakai timestamp selesai.
 4. **Runtime Algoritma (ms):** Waktu komputasi yang dihabiskan algoritma TOPSIS untuk memetakan seluruh task.
-5. **Metodologi 3x Repeated Runs:** Setiap skala task (1.000 s/d 10.000) diuji sebanyak 3 kali dengan seed variasi transfer I/O berbeda (`seed = 42 + (scale * 10) + run`), lalu dihitung nilai **Mean $\pm$ Std Dev sampel** (`ddof=1`).
+5. **Metodologi 3x Repeated Runs:** Setiap skala task (1.000 s/d 10.000) diuji sebanyak 3 kali dengan seed variasi transfer I/O sintetis berbeda (`seed = 42 + (scale * 10) + run`), lalu dihitung nilai **Mean $\pm$ Std Dev sampel** (`ddof=1`). Pengulangan ini mengamati variasi akibat I/O; tiga run tidak menjamin konsistensi statistik atau optimalitas global.
 
 ---
 
@@ -265,9 +278,9 @@ Buka `python/kelompok_5_TOPSIS.ipynb` di VS Code / Jupyter Lab dan klik **Run Al
 
 ### ❓ Q5: "Bagaimana cara membaca dan menginterpretasikan hasil pengujian 1.000 s/d 10.000 tasks dengan 3 kali run?"
 > **Jawaban:**  
-> Hasil terbaru menerapkan arrival time dan antrean per PE. Rata-rata makespan meningkat dari 1.795,32 detik pada 1.000 task menjadi 23.118,20 detik pada 10.000 task. Perubahan antar-skala juga dipengaruhi pola kedatangan dataset, sehingga tidak disimpulkan sebagai hubungan linear terhadap jumlah task saja.
+> Hasil terbaru menerapkan arrival time dan antrean per PE. Rata-rata makespan meningkat dari 1.795,32 detik pada 1.000 task menjadi 23.102,88 detik pada 10.000 task. Perubahan antar-skala juga dipengaruhi pola kedatangan dataset, sehingga tidak disimpulkan sebagai hubungan linear terhadap jumlah task saja.
 >
-> Biaya dihitung dari akumulasi durasi task per VM dengan pembulatan per jam, bukan dari makespan. Pada 10.000 task rata-ratanya $23,20. DI memakai BusyTime dan tidak dinormalisasi terhadap jumlah PE. Runtime bergantung pada mesin dan kondisi JVM; tiga repeated runs tidak membuktikan kesiapan sistem real-time atau optimalitas global.
+> Biaya dihitung dari akumulasi durasi task per VM dengan pembulatan per jam, bukan dari makespan. Pada 10.000 task rata-ratanya $20,16. DI memakai BusyTime dan tidak dinormalisasi terhadap jumlah PE. Runtime bergantung pada mesin dan kondisi JVM; tiga repeated runs hanya mengamati variasi akibat I/O sintetis dan tidak membuktikan kesiapan sistem real-time atau optimalitas global.
 
 ---
 
@@ -292,30 +305,30 @@ Hasil terakhir dari 3 repeated runs per skala; standar deviasi sampel (`ddof=1`)
 
 | Tasks | Makespan (s) | Total Cost (USD) | DI (BusyTime) | Runtime TOPSIS (ms) |
 |---:|---:|---:|---:|---:|
-| 1000 | 1795.32 ± 0.50 | 9.44 ± 0.00 | 1.8791 ± 0.1453 | 27.36 ± 13.83 |
-| 2000 | 3057.22 ± 7.00 | 9.44 ± 0.00 | 1.6819 ± 0.0824 | 37.45 ± 6.93 |
-| 3000 | 4090.30 ± 1.30 | 10.12 ± 0.07 | 1.4266 ± 0.0413 | 31.10 ± 8.98 |
-| 4000 | 4622.44 ± 1.51 | 13.28 ± 0.00 | 1.4659 ± 0.0223 | 33.48 ± 0.35 |
-| 5000 | 5188.17 ± 1.32 | 13.28 ± 0.00 | 1.4410 ± 0.0228 | 36.97 ± 1.94 |
-| 6000 | 6200.55 ± 1.41 | 14.20 ± 0.14 | 1.3660 ± 0.0547 | 56.10 ± 3.93 |
-| 7000 | 16403.96 ± 0.78 | 17.57 ± 0.17 | 1.8876 ± 0.0490 | 53.61 ± 6.02 |
-| 8000 | 18789.69 ± 1.08 | 20.78 ± 0.28 | 2.0017 ± 0.0641 | 69.51 ± 2.86 |
-| 9000 | 21023.49 ± 0.47 | 22.36 ± 0.18 | 1.9103 ± 0.0320 | 72.63 ± 11.55 |
-| 10000 | 23118.20 ± 0.69 | 23.20 ± 0.18 | 1.8765 ± 0.0228 | 85.60 ± 18.93 |
+| 1000 | 1795.32 ± 0.50 | 9.44 ± 0.00 | 1.8791 ± 0.1453 | 20.99 ± 4.91 |
+| 2000 | 3057.22 ± 7.00 | 9.44 ± 0.00 | 1.6819 ± 0.0824 | 45.61 ± 18.03 |
+| 3000 | 4090.30 ± 1.30 | 10.12 ± 0.07 | 1.4266 ± 0.0413 | 34.72 ± 19.04 |
+| 4000 | 4622.44 ± 1.51 | 13.28 ± 0.00 | 1.4659 ± 0.0223 | 28.93 ± 0.93 |
+| 5000 | 5188.17 ± 1.32 | 13.28 ± 0.00 | 1.4410 ± 0.0228 | 34.48 ± 0.50 |
+| 6000 | 6200.55 ± 1.41 | 14.20 ± 0.14 | 1.3660 ± 0.0547 | 41.06 ± 0.55 |
+| 7000 | 16328.73 ± 1.78 | 16.36 ± 0.23 | 1.8084 ± 0.0301 | 61.89 ± 7.30 |
+| 8000 | 18611.75 ± 12.45 | 18.72 ± 0.00 | 1.8567 ± 0.0981 | 61.28 ± 5.08 |
+| 9000 | 20988.47 ± 1.53 | 18.76 ± 0.07 | 1.7687 ± 0.0599 | 73.37 ± 9.69 |
+| 10000 | 23102.88 ± 0.21 | 20.16 ± 0.00 | 1.7536 ± 0.0548 | 87.22 ± 6.64 |
 
 ### B. Distribusi Beban per Physical Host (10.000 Tasks, Run 3)
 
 | Datacenter | Host | Jumlah Task | Akumulasi Durasi Task (s) |
 |---|---|---:|---:|
-| DC_1 | Host_0 | 1252 | 75122.78 |
-| DC_1 | Host_1 | 1252 | 78291.67 |
-| DC_1 | Host_2 | 1252 | 78525.54 |
-| DC_1 | Host_3 | 1252 | 76170.34 |
-| DC_2 | Host_4 | 1252 | 78101.11 |
-| DC_2 | Host_5 | 1249 | 79025.51 |
-| DC_2 | Host_6 | 1248 | 82995.34 |
-| DC_2 | Host_7 | 1243 | 78947.91 |
+| DC_1 | Host_0 | 1253 | 64221.35 |
+| DC_1 | Host_1 | 1252 | 65565.14 |
+| DC_1 | Host_2 | 1252 | 67114.78 |
+| DC_1 | Host_3 | 1252 | 68716.60 |
+| DC_2 | Host_4 | 1252 | 65678.89 |
+| DC_2 | Host_5 | 1249 | 65447.27 |
+| DC_2 | Host_6 | 1246 | 67379.98 |
+| DC_2 | Host_7 | 1244 | 66216.23 |
 
-Seluruh delapan host menerima task pada run ini, sebanyak 1.243–1.252 task per host. Penempatan VM deterministik memastikan setiap host menampung VM; pemerataan task juga dibantu aturan skor seri TOPSIS. Hasil ini tidak menjamin host selalu sibuk atau beban durasi identik.
+Seluruh delapan host menerima task pada run ini, sebanyak 1.244–1.253 task per host. Penempatan VM deterministik memastikan setiap host menampung VM; pemerataan task juga dibantu aturan skor seri TOPSIS. Hasil ini tidak menjamin host selalu sibuk atau beban durasi identik.
 
 I/O dimodelkan sebagai tambahan durasi CPU tanpa contention jaringan (MB desimal). Prediksi TOPSIS tidak memasukkan overhead startup VM dan resolusi event simulator. SLA disimpan sebagai metadata, tanpa kebijakan prioritas SLA.

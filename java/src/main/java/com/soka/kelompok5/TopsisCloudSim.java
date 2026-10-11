@@ -662,7 +662,7 @@ public class TopsisCloudSim {
         try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(csvFile.toPath(), StandardCharsets.UTF_8))) {
             pw.println("Workload,Tasks,Run,Makespan_s,TotalCost_USD,DI,Runtime_ms");
             for (SingleRunResult r : runs) {
-                pw.printf(Locale.US, "GoCJ (Real Trace),%d,%d,%.6f,%.2f,%.6f,%.4f\n",
+                pw.printf(Locale.US, "GoCJ,%d,%d,%.6f,%.2f,%.6f,%.4f\n",
                         r.nTasks, r.runId, r.makespan, r.totalCost, r.degreeOfImbalance, r.algoRuntimeMs);
             }
             if (pw.checkError()) throw new IOException("Gagal menulis " + csvFile);
