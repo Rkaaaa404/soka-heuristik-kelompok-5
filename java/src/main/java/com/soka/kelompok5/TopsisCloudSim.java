@@ -40,11 +40,6 @@ import java.util.Optional;
 import java.util.Random;
 
 /**
- * ==============================================================================
- * SIMULASI PENJADWALAN CLOUDLET DENGAN MULTI-KRITERIA TOPSIS (CLOUDSIM PLUS)
- * Strategi Optimasi Komputasi Awan (SOKA) - Kelompok 5
- * ==============================================================================
- *
  * ARSITEKTUR INFRASTRUKTUR CLOUD:
  * - 2 Datacenter Fisik (DC 1: Host 0-3, DC 2: Host 4-7)
  * - 8 Physical Host HOMOGEN (Masing-masing 24 Core @ 10.000 MIPS, 64 GB RAM, 2 TB Storage)
@@ -54,12 +49,6 @@ import java.util.Random;
  * PEMETAAN DETERMINISTIK (SETIAP HOST MENAMPUNG VM):
  * - DC 1: Host 0 (VM 0-9),   Host 1 (VM 10-19), Host 2 (VM 20-29), Host 3 (VM 30-39)
  * - DC 2: Host 4 (VM 40-49), Host 5 (VM 50-59), Host 6 (VM 60-69), Host 7 (VM 70-79)
- *
- * KARAKTERISTIK WORKLOAD GOOGLE CLOUD JOBS (GoCJ):
- * - GoCJ merepresentasikan INDEPENDENT TASKS (Bag-of-Tasks / Meta-Tasks).
- * - Tidak memiliki graph precedence / ketergantungan antar-task.
- * - Kolom SLA adalah SERVICE LEVEL AGREEMENT (Tingkat Prioritas: 1=Low, 2=Medium, 3=High),
- *   BUKAN task dependency!
  *
  * SKENARIO PENGUJIAN:
  * - 10 Variasi Skala Task: 1.000, 2.000, ..., 10.000 tasks.
