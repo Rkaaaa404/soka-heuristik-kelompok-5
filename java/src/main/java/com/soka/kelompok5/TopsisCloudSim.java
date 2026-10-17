@@ -35,6 +35,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Random;
@@ -57,11 +58,10 @@ import java.util.Random;
  */
 public class TopsisCloudSim {
 
-    private static final int DATACENTER_COUNT = 2;
-    private static final int HOSTS_PER_DATACENTER = 4;
-    private static final int HOST_COUNT = DATACENTER_COUNT * HOSTS_PER_DATACENTER;
-    private static final int[] VMS_PER_TYPE_PER_HOST = {4, 4, 2};
-    private static final int VMS_PER_HOST = Arrays.stream(VMS_PER_TYPE_PER_HOST).sum();
+    // Konfigurasi host default & simulasi
+    public static final int HOSTS_PER_DATACENTER = 4;
+    public static final int[] VMS_PER_TYPE_PER_HOST = {4, 4, 2};
+    public static final int VMS_PER_HOST = Arrays.stream(VMS_PER_TYPE_PER_HOST).sum();
     private static final int HOST_PES = 24;
     private static final double HOST_MIPS = 10_000;
     private static final long HOST_RAM_MB = 65_536;
@@ -118,18 +118,126 @@ public class TopsisCloudSim {
             this.hostId = hostId;
         }
     }
+    // ─────────────────────────────────────────────────────────────
+    // 1B. KONFIGURASI TOPOLOGI CLOUD (DATACENTER, HOST, ALOKASI VM)
+    // ─────────────────────────────────────────────────────────────
+
+    public static class HostConfig {
+        public final int smallVms;
+        public final int mediumVms;
+        public final int largeVms;
+
+        public HostConfig(int smallVms, int mediumVms, int largeVms) {
+            this.smallVms = smallVms;
+            this.mediumVms = mediumVms;
+            this.largeVms = largeVms;
+        }
+
+        public int totalVms() {
+            return smallVms + mediumVms + largeVms;
+        }
+
+        public int totalPes() {
+            return smallVms * VmType.SMALL.pes + mediumVms * VmType.MEDIUM.pes + largeVms * VmType.LARGE.pes;
+        }
+
+        public long totalRamMb() {
+            return smallVms * VmType.SMALL.ramMb + mediumVms * VmType.MEDIUM.ramMb + largeVms * VmType.LARGE.ramMb;
+        }
+    }
+
+    public static class DatacenterConfig {
+        public final String name;
+        public final List<HostConfig> hosts;
+
+        public DatacenterConfig(String name, List<HostConfig> hosts) {
+            this.name = name;
+            this.hosts = List.copyOf(hosts);
+        }
+
+        /** Helper jika semua host dalam satu datacenter memiliki jumlah VM yang seragam */
+        public static DatacenterConfig ofUniformHosts(String name, int hostCount, int smallVms, int mediumVms, int largeVms) {
+            List<HostConfig> list = new ArrayList<>();
+            for (int i = 0; i < hostCount; i++) {
+                list.add(new HostConfig(smallVms, mediumVms, largeVms));
+            }
+            return new DatacenterConfig(name, list);
+        }
+    }
 
     /**
-     * Membangun daftar 80 VM heterogen dengan pola 10 VM per host:
+     * Konfigurasi Topologi Infrastruktur Cloud: Datacenter, Host, dan Alokasi VM.
+     *
+     * KONFIGURASI BAWAAN (AS-IS):
+     * - Datacenter 1: 4 Host (Host 0-3), masing-masing 4 Small, 4 Medium, 2 Large (VM 0-39)
+     * - Datacenter 2: 4 Host (Host 4-7), masing-masing 4 Small, 4 Medium, 2 Large (VM 40-79)
+     *
+     * CARA MENAMBAHKAN DATACENTER 3 (atau datacenter berikutnya):
+     * Cukup tambahkan DatacenterConfig baru ke dalam list 'topology' di bawah!
+     *
+     * Contoh:
+     * // Jika semua host di Datacenter 3 seragam (misal 2 host, tiap host 3 Small, 2 Medium, 1 Large):
+     * topology.add(DatacenterConfig.ofUniformHosts("Datacenter 3", 2, 3, 2, 1));
+     *
+     * // Jika tiap host di Datacenter 3 memiliki komposisi VM yang berbeda:
+     * topology.add(new DatacenterConfig("Datacenter 3", List.of(
+     *     new HostConfig(5, 2, 1), // Host 8: 5 Small, 2 Medium, 1 Large
+     *     new HostConfig(2, 4, 2)  // Host 9: 2 Small, 4 Medium, 2 Large
+     * )));
+     */
+    public static List<DatacenterConfig> buildInfrastructureTopology() {
+        List<DatacenterConfig> topology = new ArrayList<>();
+
+        // ── DATACENTER 1 (AS-IS: 4 Host, 4 Small, 4 Medium, 2 Large) ──
+        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 1", 4, 4, 4, 2));
+
+        // ── DATACENTER 2 (AS-IS: 4 Host, 4 Small, 4 Medium, 2 Large) ──
+        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 2", 4, 4, 4, 2));
+
+        // ── TAMBAHKAN DATACENTER 3 DI SINI JIKA DIPERLUKAN (CONTOH SIAP PAKAI): ──
+        // topology.add(DatacenterConfig.ofUniformHosts("Datacenter 3", 2, 3, 2, 1));
+
+        return List.copyOf(topology);
+    }
+
+    public static final List<DatacenterConfig> TOPOLOGY = buildInfrastructureTopology();
+    public static final int DATACENTER_COUNT = TOPOLOGY.size();
+    public static final int HOST_COUNT = TOPOLOGY.stream().mapToInt(dc -> dc.hosts.size()).sum();
+
+    private static Map<Integer, Integer> buildHostToDcMap() {
+        Map<Integer, Integer> map = new HashMap<>();
+        int currentHostId = 0;
+        for (int dcIndex = 0; dcIndex < TOPOLOGY.size(); dcIndex++) {
+            for (int h = 0; h < TOPOLOGY.get(dcIndex).hosts.size(); h++) {
+                map.put(currentHostId++, dcIndex);
+            }
+        }
+        return Map.copyOf(map);
+    }
+
+    private static final Map<Integer, Integer> HOST_TO_DC_ID = buildHostToDcMap();
+
+    /**
+     * Membangun daftar VM heterogen secara deterministik dari konfigurasi TOPOLOGY:
      * - Host 0-3 di Datacenter 1 (VM 0-39)
      * - Host 4-7 di Datacenter 2 (VM 40-79)
+     * - Host & VM tambahan jika ada Datacenter baru di TOPOLOGY
      */
     private static List<VmSpec> buildVmSpecs() {
         List<VmSpec> list = new ArrayList<>();
-        for (int hostId = 0; hostId < HOST_COUNT; hostId++) {
-            for (VmType type : VmType.values()) {
-                for (int i = 0; i < VMS_PER_TYPE_PER_HOST[type.ordinal()]; i++) {
-                    list.add(new VmSpec(list.size(), type, hostId / HOSTS_PER_DATACENTER, hostId));
+        int currentHostId = 0;
+        for (int dcIndex = 0; dcIndex < TOPOLOGY.size(); dcIndex++) {
+            DatacenterConfig dc = TOPOLOGY.get(dcIndex);
+            for (HostConfig hc : dc.hosts) {
+                int hostId = currentHostId++;
+                for (int i = 0; i < hc.smallVms; i++) {
+                    list.add(new VmSpec(list.size(), VmType.SMALL, dcIndex, hostId));
+                }
+                for (int i = 0; i < hc.mediumVms; i++) {
+                    list.add(new VmSpec(list.size(), VmType.MEDIUM, dcIndex, hostId));
+                }
+                for (int i = 0; i < hc.largeVms; i++) {
+                    list.add(new VmSpec(list.size(), VmType.LARGE, dcIndex, hostId));
                 }
             }
         }
@@ -137,7 +245,6 @@ public class TopsisCloudSim {
     }
 
     public static final List<VmSpec> ALL_VM_SPECS = buildVmSpecs();
-
     // ─────────────────────────────────────────────────────────────
     // 2. MODEL DATA WORKLOAD & METRIK HASIL SIMULASI
     // ─────────────────────────────────────────────────────────────
@@ -235,8 +342,8 @@ public class TopsisCloudSim {
 
         System.out.println("=========================================================================================");
         System.out.println("  SIMULASI CLOUDSIM PLUS: EVALUASI TOPSIS SKALA MASIF GOOGLE CLOUD JOBS (1K - 10K TASKS)");
-        System.out.printf("  Arsitektur: %d Datacenter, %d Host Homogen, %d VM Heterogen (%d VM/Host)%n",
-                DATACENTER_COUNT, HOST_COUNT, ALL_VM_SPECS.size(), VMS_PER_HOST);
+        System.out.printf("  Arsitektur: %d Datacenter, %d Host, %d VM Heterogen%n",
+                DATACENTER_COUNT, HOST_COUNT, ALL_VM_SPECS.size());
         System.out.printf("  Pengujian: %d Repeated Runs per Skala Task%n", RUNS_PER_SCALE);
         System.out.println("=========================================================================================\n");
 
@@ -311,11 +418,21 @@ public class TopsisCloudSim {
 
     static DatacenterBroker createBroker(CloudSimPlus simulation) {
         List<Datacenter> datacenters = new ArrayList<>();
-        for (int dcIndex = 0; dcIndex < DATACENTER_COUNT; dcIndex++) {
-            List<Host> hosts = createHostList(dcIndex * HOSTS_PER_DATACENTER, HOSTS_PER_DATACENTER);
+        int currentHostId = 0;
+
+        for (int dcIndex = 0; dcIndex < TOPOLOGY.size(); dcIndex++) {
+            DatacenterConfig dcConfig = TOPOLOGY.get(dcIndex);
+            List<Host> hosts = new ArrayList<>();
+            for (HostConfig hc : dcConfig.hosts) {
+                int hostPes = Math.max(HOST_PES, hc.totalPes());
+                long hostRam = Math.max(HOST_RAM_MB, hc.totalRamMb());
+                hosts.add(createHost(currentHostId++, hostPes, HOST_MIPS, hostRam, HOST_BW_MBPS, HOST_STORAGE_MB));
+            }
             var policy = new VmAllocationPolicySimple((allocationPolicy, vm) -> {
                 VmSpec spec = ALL_VM_SPECS.get(Math.toIntExact(vm.getId()));
-                return Optional.of(allocationPolicy.getHostList().get(spec.hostId % HOSTS_PER_DATACENTER));
+                return allocationPolicy.getHostList().stream()
+                        .filter(h -> h.getId() == spec.hostId)
+                        .findFirst();
             });
             datacenters.add(new DatacenterSimple(simulation, hosts, policy));
         }
@@ -375,8 +492,8 @@ public class TopsisCloudSim {
                 throw new IllegalStateException("Pemetaan host salah untuk VM " + spec.id);
             }
             List<Host> dcHosts = host.getDatacenter().getHostList();
-            if (dcHosts.size() != HOSTS_PER_DATACENTER
-                    || dcHosts.stream().anyMatch(h -> h.getId() / HOSTS_PER_DATACENTER != spec.dcId)) {
+            if (dcHosts.stream().noneMatch(h -> h.getId() == spec.hostId)
+                    || dcHosts.stream().anyMatch(h -> HOST_TO_DC_ID.getOrDefault(Math.toIntExact(h.getId()), -1) != spec.dcId)) {
                 throw new IllegalStateException("Datacenter salah untuk VM " + spec.id);
             }
         }
@@ -441,17 +558,21 @@ public class TopsisCloudSim {
      * - 10 Gbps Bandwidth (10.000 Mbps)
      * - VmSchedulerSpaceShared (alokasi core dedicated non-preemptive)
      */
-    private static List<Host> createHostList(int startId, int count) {
+    private static Host createHost(int id, int pes, double mips, long ramMb, long bwMbps, long storageMb) {
+        List<Pe> peList = new ArrayList<>();
+        for (int p = 0; p < pes; p++) {
+            peList.add(new PeSimple(mips));
+        }
+        Host host = new HostSimple(ramMb, bwMbps, storageMb, peList);
+        host.setId(id);
+        host.setVmScheduler(new VmSchedulerSpaceShared());
+        return host;
+    }
+
+    static List<Host> createHostList(int startId, int count) {
         List<Host> list = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            List<Pe> peList = new ArrayList<>();
-            for (int p = 0; p < HOST_PES; p++) {
-                peList.add(new PeSimple(HOST_MIPS));
-            }
-            Host host = new HostSimple(HOST_RAM_MB, HOST_BW_MBPS, HOST_STORAGE_MB, peList);
-            host.setId(startId + i);
-            host.setVmScheduler(new VmSchedulerSpaceShared());
-            list.add(host);
+            list.add(createHost(startId + i, HOST_PES, HOST_MIPS, HOST_RAM_MB, HOST_BW_MBPS, HOST_STORAGE_MB));
         }
         return list;
     }
@@ -613,23 +734,31 @@ public class TopsisCloudSim {
 
     private static void printAllocationArchitectureTable() {
         System.out.println("Tabel Arsitektur Pemetaan Virtual Machine ke Physical Host:");
-        System.out.println("+---------------+--------------+-------------+---------------------------+------------+-------------+");
-        System.out.println("| Datacenter    | PhysicalHost | Range VM ID | Komposisi Tipe VM (10 VM) | Total vCPU | Total RAM   |");
-        System.out.println("+---------------+--------------+-------------+---------------------------+------------+-------------+");
-        for (int hostId = 0; hostId < HOST_COUNT; hostId++) {
+        System.out.println("+---------------+--------------+-------------+------------------------------------+------------+-------------+");
+        System.out.println("| Datacenter    | PhysicalHost | Range VM ID | Komposisi Tipe VM                  | Total vCPU | Total RAM   |");
+        System.out.println("+---------------+--------------+-------------+------------------------------------+------------+-------------+");
+        List<Integer> hostIds = ALL_VM_SPECS.stream().map(s -> s.hostId).distinct().sorted().toList();
+        for (int hostId : hostIds) {
             final int selectedHost = hostId;
             List<VmSpec> specs = ALL_VM_SPECS.stream().filter(spec -> spec.hostId == selectedHost).toList();
             int pes = specs.stream().mapToInt(spec -> spec.type.pes).sum();
             long ram = specs.stream().mapToLong(spec -> spec.type.ramMb).sum();
+            int dcId = specs.get(0).dcId;
             String composition = Arrays.stream(VmType.values())
-                    .map(type -> VMS_PER_TYPE_PER_HOST[type.ordinal()] + " " + type.label)
+                    .map(type -> {
+                        long count = specs.stream().filter(s -> s.type == type).count();
+                        return count > 0 ? (count + " " + type.label) : null;
+                    })
+                    .filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.joining(", "));
-            System.out.printf("| Datacenter %-2d | Host %-7d | VM %02d - %02d  | %-25s | %-10d | %-11d |%n",
-                    hostId / HOSTS_PER_DATACENTER + 1, hostId, specs.get(0).id,
-                    specs.get(specs.size() - 1).id, composition, pes, ram);
+            String vmRange = specs.isEmpty() ? "Tidak Ada VM " : (specs.size() == 1
+                    ? String.format("VM %02d      ", specs.get(0).id)
+                    : String.format("VM %02d - %02d ", specs.get(0).id, specs.get(specs.size() - 1).id));
+            System.out.printf("| Datacenter %-2d | Host %-7d | %s | %-34s | %-10d | %-11d |%n",
+                    dcId + 1, hostId, vmRange, composition, pes, ram);
         }
-        System.out.println("+---------------+--------------+-------------+---------------------------+------------+-------------+");
-        System.out.printf("Host: %d PE @ %.0f MIPS | %d MB RAM | %d MB Storage | %d Mbps BW%n%n",
+        System.out.println("+---------------+--------------+-------------+------------------------------------+------------+-------------+");
+        System.out.printf("Standar Host Default: %d PE @ %.0f MIPS | %d MB RAM | %d MB Storage | %d Mbps BW%n%n",
                 HOST_PES, HOST_MIPS, HOST_RAM_MB, HOST_STORAGE_MB, HOST_BW_MBPS);
     }
 
