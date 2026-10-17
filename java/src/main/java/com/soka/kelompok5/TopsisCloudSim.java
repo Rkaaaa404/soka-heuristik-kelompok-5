@@ -167,20 +167,11 @@ public class TopsisCloudSim {
 
     /**
      * Konfigurasi Topologi Infrastruktur Cloud: Datacenter, Host, dan Alokasi VM.
-     *
-     * KONFIGURASI BAWAAN (AS-IS):
      * - Datacenter 1: 4 Host (Host 0-3), masing-masing 4 Small, 4 Medium, 2 Large (VM 0-39)
      * - Datacenter 2: 4 Host (Host 4-7), masing-masing 4 Small, 4 Medium, 2 Large (VM 40-79)
      *
-     * CARA MENAMBAHKAN DATACENTER 3 (atau datacenter berikutnya):
-     * Cukup tambahkan DatacenterConfig baru ke dalam list 'topology' di bawah!
-     *
-     * Contoh:
-     * // Jika semua host di Datacenter 3 seragam (misal 2 host, tiap host 3 Small, 2 Medium, 1 Large):
-     * topology.add(DatacenterConfig.ofUniformHosts("Datacenter 3", 2, 3, 2, 1));
-     *
-     * // Jika tiap host di Datacenter 3 memiliki komposisi VM yang berbeda:
-     * topology.add(new DatacenterConfig("Datacenter 3", List.of(
+     * Jika tiap host di Datacenter memiliki komposisi VM yang berbeda:
+     * topology.add(new DatacenterConfig("Datacenter x", List.of(
      *     new HostConfig(5, 2, 1), // Host 8: 5 Small, 2 Medium, 1 Large
      *     new HostConfig(2, 4, 2)  // Host 9: 2 Small, 4 Medium, 2 Large
      * )));
@@ -188,14 +179,11 @@ public class TopsisCloudSim {
     public static List<DatacenterConfig> buildInfrastructureTopology() {
         List<DatacenterConfig> topology = new ArrayList<>();
 
-        // ── DATACENTER 1 (AS-IS: 4 Host, 4 Small, 4 Medium, 2 Large) ──
+        // ── DATACENTER 1 (4 Host, 4 Small, 4 Medium, 2 Large) ──
         topology.add(DatacenterConfig.ofUniformHosts("Datacenter 1", 4, 4, 4, 2));
 
-        // ── DATACENTER 2 (AS-IS: 4 Host, 4 Small, 4 Medium, 2 Large) ──
+        // ── DATACENTER 2 (4 Host, 4 Small, 4 Medium, 2 Large) ──
         topology.add(DatacenterConfig.ofUniformHosts("Datacenter 2", 4, 4, 4, 2));
-
-        // ── TAMBAHKAN DATACENTER 3 DI SINI JIKA DIPERLUKAN (CONTOH SIAP PAKAI): ──
-        // topology.add(DatacenterConfig.ofUniformHosts("Datacenter 3", 2, 3, 2, 1));
 
         return List.copyOf(topology);
     }
@@ -221,7 +209,6 @@ public class TopsisCloudSim {
      * Membangun daftar VM heterogen secara deterministik dari konfigurasi TOPOLOGY:
      * - Host 0-3 di Datacenter 1 (VM 0-39)
      * - Host 4-7 di Datacenter 2 (VM 40-79)
-     * - Host & VM tambahan jika ada Datacenter baru di TOPOLOGY
      */
     private static List<VmSpec> buildVmSpecs() {
         List<VmSpec> list = new ArrayList<>();
