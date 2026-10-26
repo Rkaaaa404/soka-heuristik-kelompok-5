@@ -1,0 +1,13 @@
+{
+  "status": "SUCCESS",
+  "mode": "real",
+  "dataset": "gocj_dataset\\GoCJ_Dataset_1000.csv",
+  "tasksRequested": 20,
+  "tasksCompleted": 20,
+  "iterationsPerMi": 10.0,
+  "arrivalScale": 0.01,
+  "makespanSeconds": 10.5078586,
+  "modeledCostUsd": 0.1,
+  "degreeOfImbalance": 2.4815322982601358,
+  "schedulerRuntimeMs": 7.2241
+}

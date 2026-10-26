@@ -1,0 +1,5 @@
+DatacenterId,HostId,VmId,WorkerHostname,Slots,ModeledHourlyRate_USD,MeasuredIterationsPerSecond,BusyTime_s,TaskCount
+aws-sydney,soka-host-1,soka-vm-s1,ubuntu,1,0.0500,8664779.19,0.540836,9
+aws-sydney,soka-host-1,soka-vm-m1,ubuntu,2,0.1200,5902794.27,0.000000,0
+aws-sydney,soka-host-2,soka-vm-s2,ubuntu,1,0.0500,11004932.47,0.883853,11
+aws-sydney,soka-host-2,soka-vm-m2,ubuntu,2,0.1200,6399860.03,0.000000,0
