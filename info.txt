@@ -1,0 +1,28 @@
+## Akses AWS
+
+Region: Asia Pacific (Sydney), `ap-southeast-2`  
+Availability Zone kedua host: `ap-southeast-2a`
+
+Public IP
+Host 1: 13.239.241.220
+Host 2: 52.63.114.7
+
+Security group membatasi SSH ke IP My IP. Jika orang lain perlu masuk dari laptopnya sendiri, aturan SSH perlu mengizinkan IP orang tersebut.
+
+## Host EC2
+
+| Host | Instance ID | Private IP | Tipe | Kapasitas |
+|---|---|---|---|---|
+| `soka-host-1` | `i-0ee2213be790b0b23` | `172.31.1.242` | `m7i-flex.large` | 2 vCPU, 8 GiB RAM, disk 16 GiB |
+| `soka-host-2` | `i-078a63e2bc5a95315` | `172.31.3.212` | `m7i-flex.large` | 2 vCPU, 8 GiB RAM, disk 16 GiB |
+
+Keduanya memakai Ubuntu Server 24.04 x86 dengan nested virtualization, KVM, dan libvirt aktif.
+
+## VM guest di dalam host
+
+| Host | VM | Alamat IP privat terakhir terlihat | Spesifikasi |
+|---|---|---|---|
+| Host 1 | `soka-vm-s1` | `192.168.122.130` | 1 vCPU, 1 GiB RAM, disk 4 GiB |
+| Host 1 | `soka-vm-m1` | `192.168.122.246` | 2 vCPU, 2 GiB RAM, disk 4 GiB |
+| Host 2 | `soka-vm-s2` | `192.168.122.28` | 1 vCPU, 1 GiB RAM, disk 4 GiB |
+| Host 2 | `soka-vm-m2` | `192.168.122.54` | 2 vCPU, 2 GiB RAM, disk 4 GiB |

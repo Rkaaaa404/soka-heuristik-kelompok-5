@@ -1,0 +1,18 @@
+[Unit]
+Description=SOKA TOPSIS Real Workload Compute Worker
+After=network.target
+
+[Service]
+Type=simple
+User=soka
+Group=soka
+WorkingDirectory=/opt/soka
+EnvironmentFile=/etc/soka/worker.env
+ExecStart=/usr/bin/java -Xms32m -Xmx256m -cp "/opt/soka/lib/*" com.soka.kelompok5.TopsisWorker --datacenter-id ${DATACENTER_ID} --host-id ${HOST_ID} --vm-id ${VM_ID} --slots ${SLOTS} --bind 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
