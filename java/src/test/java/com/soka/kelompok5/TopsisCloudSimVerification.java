@@ -113,7 +113,9 @@ public final class TopsisCloudSimVerification {
         }
         check(byId.get(8L).getExecStartTime() >= 1000 && byId.get(8L).getFinishTime() < 1102,
                 "Late task must wait until arrival, then execute");
-        check(vms.stream().filter(vm -> vm.getHost().getId() >= 4).count() == 40, "40 VMs must map to DC2 hosts");
+        check(vms.size() == 27, "27 VMs must be created");
+        check(vms.stream().filter(vm -> vm.getHost().getId() >= 3 && vm.getHost().getId() <= 5).count() == 9, "9 VMs must map to DC2 hosts");
+        check(vms.stream().filter(vm -> vm.getHost().getId() >= 6 && vm.getHost().getId() <= 8).count() == 9, "9 VMs must map to DC3 hosts");
         expectFailure(IllegalStateException.class,
                 () -> validateFinishedTasks(tasks, assignments, finished.subList(0, finished.size() - 1)));
         List<Cloudlet> duplicates = new ArrayList<>(finished);
