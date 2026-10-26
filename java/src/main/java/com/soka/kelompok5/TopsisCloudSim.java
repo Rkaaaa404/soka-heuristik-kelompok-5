@@ -41,15 +41,16 @@ import java.util.Optional;
 import java.util.Random;
 
 /**
- * ARSITEKTUR INFRASTRUKTUR CLOUD:
- * - 2 Datacenter Fisik (DC 1: Host 0-3, DC 2: Host 4-7)
- * - 8 Physical Host HOMOGEN (Masing-masing 24 Core @ 10.000 MIPS, 64 GB RAM, 2 TB Storage)
- * - 80 Virtual Machine HETEROGEN (10 VM per Host: 4 Small, 4 Medium, 2 Large)
- *   -> Total Kapasitas: 160 vCPU, 320 GB RAM, tarif sewa agregat $9.44/jam
+ * ARSITEKTUR INFRASTRUKTUR CLOUD (SCENARIO 2):
+ * - 3 Datacenter Fisik (DC 1: Host 0-2, DC 2: Host 3-5, DC 3: Host 6-8)
+ * - 9 Physical Host HOMOGEN (Masing-masing 24 Core @ 10.000 MIPS, 64 GB RAM, 2 TB Storage)
+ * - 27 Virtual Machine HETEROGEN (3 VM per Host: 1 Small, 1 Medium, 1 Large -> 9 Small, 9 Medium, 9 Large)
+ *   -> Total Kapasitas: 63 vCPU, 126 GB RAM, 234.000 aggregate MIPS, tarif sewa agregat $3.78/jam
  *
  * PEMETAAN DETERMINISTIK (SETIAP HOST MENAMPUNG VM):
- * - DC 1: Host 0 (VM 0-9),   Host 1 (VM 10-19), Host 2 (VM 20-29), Host 3 (VM 30-39)
- * - DC 2: Host 4 (VM 40-49), Host 5 (VM 50-59), Host 6 (VM 60-69), Host 7 (VM 70-79)
+ * - DC 1: Host 0 (VM 00-02), Host 1 (VM 03-05), Host 2 (VM 06-08) -> 9 VM
+ * - DC 2: Host 3 (VM 09-11), Host 4 (VM 12-14), Host 5 (VM 15-17) -> 9 VM
+ * - DC 3: Host 6 (VM 18-20), Host 7 (VM 21-23), Host 8 (VM 24-26) -> 9 VM
  *
  * SKENARIO PENGUJIAN:
  * - 10 Variasi Skala Task: 1.000, 2.000, ..., 10.000 tasks.
@@ -59,8 +60,8 @@ import java.util.Random;
 public class TopsisCloudSim {
 
     // Konfigurasi host default & simulasi
-    public static final int HOSTS_PER_DATACENTER = 4;
-    public static final int[] VMS_PER_TYPE_PER_HOST = {4, 4, 2};
+    public static final int HOSTS_PER_DATACENTER = 3;
+    public static final int[] VMS_PER_TYPE_PER_HOST = {1, 1, 1};
     public static final int VMS_PER_HOST = Arrays.stream(VMS_PER_TYPE_PER_HOST).sum();
     private static final int HOST_PES = 24;
     private static final double HOST_MIPS = 10_000;
@@ -167,8 +168,9 @@ public class TopsisCloudSim {
 
     /**
      * Konfigurasi Topologi Infrastruktur Cloud: Datacenter, Host, dan Alokasi VM.
-     * - Datacenter 1: 4 Host (Host 0-3), masing-masing 4 Small, 4 Medium, 2 Large (VM 0-39)
-     * - Datacenter 2: 4 Host (Host 4-7), masing-masing 4 Small, 4 Medium, 2 Large (VM 40-79)
+     * - Datacenter 1: 3 Host (Host 0-2), masing-masing 1 Small, 1 Medium, 1 Large (VM 0-8)
+     * - Datacenter 2: 3 Host (Host 3-5), masing-masing 1 Small, 1 Medium, 1 Large (VM 9-17)
+     * - Datacenter 3: 3 Host (Host 6-8), masing-masing 1 Small, 1 Medium, 1 Large (VM 18-26)
      *
      * Jika tiap host di Datacenter memiliki komposisi VM yang berbeda:
      * topology.add(new DatacenterConfig("Datacenter x", List.of(
@@ -179,11 +181,14 @@ public class TopsisCloudSim {
     public static List<DatacenterConfig> buildInfrastructureTopology() {
         List<DatacenterConfig> topology = new ArrayList<>();
 
-        // ── DATACENTER 1 (4 Host, 4 Small, 4 Medium, 2 Large) ──
-        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 1", 4, 4, 4, 2));
+        // ── DATACENTER 1 (3 Host, 1 Small, 1 Medium, 1 Large) ──
+        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 1", 3, 1, 1, 1));
 
-        // ── DATACENTER 2 (4 Host, 4 Small, 4 Medium, 2 Large) ──
-        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 2", 4, 4, 4, 2));
+        // ── DATACENTER 2 (3 Host, 1 Small, 1 Medium, 1 Large) ──
+        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 2", 3, 1, 1, 1));
+
+        // ── DATACENTER 3 (3 Host, 1 Small, 1 Medium, 1 Large) ──
+        topology.add(DatacenterConfig.ofUniformHosts("Datacenter 3", 3, 1, 1, 1));
 
         return List.copyOf(topology);
     }
@@ -371,12 +376,31 @@ public class TopsisCloudSim {
 
         printFinalSummaryTable(aggregatedResults);
 
-        // Ekspor ke CSV di folder docs/
-        exportMetricsCsv(projectRoot.resolve("docs"), allSingleRuns);
-        if (lastScaleRun != null) {
-            exportVmAllocationCsv(projectRoot.resolve("docs"), lastScaleRun);
+        // Ekspor ke CSV di folder docs/ dan target direktori skenario
+        List<Path> exportDirs = new ArrayList<>();
+        exportDirs.add(projectRoot.resolve("docs"));
+        String targetArg = args.length > 0 ? args[0] : System.getProperty("outDir");
+        if (targetArg != null && !targetArg.isBlank()) {
+            Path targetPath = targetArg.startsWith("docs")
+                    ? projectRoot.resolve(targetArg)
+                    : projectRoot.resolve("docs").resolve(targetArg);
+            if (!exportDirs.contains(targetPath)) {
+                exportDirs.add(targetPath);
+            }
         }
 
+        for (Path dir : exportDirs) {
+            try {
+                Files.createDirectories(dir);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Gagal membuat direktori ekspor: " + dir, e);
+            }
+            exportMetricsCsv(dir, allSingleRuns);
+            exportMetricsSummaryCsv(dir, aggregatedResults);
+            if (lastScaleRun != null) {
+                exportVmAllocationCsv(dir, lastScaleRun);
+            }
+        }
         System.out.println("\n[SELESAI] Seluruh simulasi selesai dengan sukses. Data CSV telah diperbarui di folder docs/.");
     }
 
@@ -782,6 +806,22 @@ public class TopsisCloudSim {
             throw new UncheckedIOException("Gagal mengekspor metrics CSV", e);
         }
     }
+    private static void exportMetricsSummaryCsv(Path targetDir, List<AggregatedResult> results) {
+        File csvFile = targetDir.resolve("cloudsim_metrics_summary.csv").toFile();
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(csvFile.toPath(), StandardCharsets.UTF_8))) {
+            pw.println("Tasks,Makespan_Mean,Makespan_Std,TotalCost_Mean,TotalCost_Std,DI_Mean,DI_Std,Runtime_Mean,Runtime_Std");
+            for (AggregatedResult r : results) {
+                pw.printf(Locale.US, "%d,%.6f,%.6f,%.2f,%.2f,%.6f,%.6f,%.4f,%.4f\n",
+                        r.nTasks, r.meanMakespan, r.stdMakespan, r.meanCost, r.stdCost,
+                        r.meanDi, r.stdDi, r.meanRuntimeMs, r.stdRuntimeMs);
+            }
+            if (pw.checkError()) throw new IOException("Gagal menulis " + csvFile);
+            System.out.println("[EXPORT] Data ringkasan metrik berhasil diekspor ke: " + csvFile.getAbsolutePath());
+        } catch (IOException e) {
+            throw new UncheckedIOException("Gagal mengekspor metrics summary CSV", e);
+        }
+    }
+
 
     private static void exportVmAllocationCsv(Path targetDir, SingleRunResult runResult) {
         File csvFile = targetDir.resolve("cloudsim_vm_allocation.csv").toFile();
@@ -794,7 +834,7 @@ public class TopsisCloudSim {
                         spec.type.hourlyRate, runResult.vmBusyTimes[i], runResult.vmTaskCounts[i]);
             }
             if (pw.checkError()) throw new IOException("Gagal menulis " + csvFile);
-            System.out.println("[EXPORT] Data alokasi 80 VM berhasil diekspor ke: " + csvFile.getAbsolutePath());
+            System.out.println("[EXPORT] Data alokasi " + ALL_VM_SPECS.size() + " VM berhasil diekspor ke: " + csvFile.getAbsolutePath());
         } catch (IOException e) {
             throw new UncheckedIOException("Gagal mengekspor VM allocation CSV", e);
         }

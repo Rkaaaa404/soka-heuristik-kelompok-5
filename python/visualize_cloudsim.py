@@ -1,13 +1,14 @@
 """
-Visualisasi Hasil Simulasi CloudSim Plus - Penjadwalan TOPSIS (SOKA Kelompok 5)
-Script ini membaca hasil ekspor CSV dari TopsisCloudSim.java (docs/cloudsim_metrics.csv
-dan docs/cloudsim_vm_allocation.csv) dan menghasilkan 3 grafik publikasi resolusi tinggi:
-1. docs/cloudsim_evaluation_metrics.png          : 4 Metrik Evaluasi (Makespan, Cost, DI, Runtime) dengan Error Band (3 runs)
-2. docs/cloudsim_datacenter_host_distribution.png: Distribusi Beban per Host pada Datacenter 1 (Host 0-3) dan DC 2 (Host 4-7)
-3. docs/cloudsim_vm_workload_distribution.png    : Distribusi Beban Kerja Agregat Berdasarkan 3 Kelas VM (Small, Medium, Large)
+Visualisasi Hasil Simulasi CloudSim Plus & Evaluasi Penjadwalan TOPSIS (SOKA 5)
+Mendukung eksekusi multi-skenario secara dinamis:
+- Skala 1.000 s/d 10.000 tasks (10 variasi skala, 3 repeated runs)
+- Konfigurasi arbitrary Datacenter, Physical Host, dan VM Heterogen
+- Ekspor visualisasi ke target direktori (CLI arguments: --data-dir, --out-dir, --scenario-title)
 """
 
 import os
+import sys
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -16,35 +17,66 @@ matplotlib.use('Agg')  # Export files without requiring a desktop/Tk installatio
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-# Path konfigurasi direktori
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOCS_DIR = os.path.join(BASE_DIR, 'docs')
-METRICS_CSV = os.path.join(DOCS_DIR, 'cloudsim_metrics.csv')
-VM_ALLOCATION_CSV = os.path.join(DOCS_DIR, 'cloudsim_vm_allocation.csv')
+DEFAULT_DOCS_DIR = os.path.join(BASE_DIR, 'docs')
 
 
-def load_metrics_data():
-    if not os.path.exists(METRICS_CSV):
-        raise FileNotFoundError(f"File metrik tidak ditemukan di {METRICS_CSV}. Jalankan TopsisCloudSim.java terlebih dahulu.")
-    df = pd.read_csv(METRICS_CSV)
-    print(f"[INFO] Memuat {len(df)} baris data metrik dari: {METRICS_CSV}")
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualisasi Hasil Simulasi CloudSim Plus & TOPSIS")
+    parser.add_argument("--data-dir", default=DEFAULT_DOCS_DIR,
+                        help="Direktori input CSV (default: docs/)")
+    parser.add_argument("--out-dir", default=None,
+                        help="Direktori output grafik (default: sama dengan data-dir)")
+    parser.add_argument("--scenario-title", default=None,
+                        help="Keterangan judul skenario (misal: 'Scenario 1 (2 DC, 8 Host, 80 VM)')")
+    return parser.parse_args()
+
+
+def load_metrics_data(data_dir):
+    csv_path = os.path.join(data_dir, 'cloudsim_metrics.csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"File metrik tidak ditemukan: {csv_path}")
+    df = pd.read_csv(csv_path)
     return df
 
 
-def load_vm_allocation_data():
-    if not os.path.exists(VM_ALLOCATION_CSV):
-        raise FileNotFoundError(f"File alokasi VM tidak ditemukan di {VM_ALLOCATION_CSV}. Jalankan TopsisCloudSim.java terlebih dahulu.")
-    df = pd.read_csv(VM_ALLOCATION_CSV)
-    print(f"[INFO] Memuat data alokasi {len(df)} VM dari: {VM_ALLOCATION_CSV}")
+def load_vm_allocation_data(data_dir):
+    csv_path = os.path.join(data_dir, 'cloudsim_vm_allocation.csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"File alokasi VM tidak ditemukan: {csv_path}")
+    df = pd.read_csv(csv_path)
     return df
 
 
-def plot_evaluation_metrics(df_metrics):
+def export_summary_csv_if_missing(df_metrics, out_dir):
+    summary_path = os.path.join(out_dir, 'cloudsim_metrics_summary.csv')
+    if not os.path.exists(summary_path):
+        agg = df_metrics.groupby('Tasks').agg({
+            'Makespan_s': ['mean', 'std'],
+            'TotalCost_USD': ['mean', 'std'],
+            'DI': ['mean', 'std'],
+            'Runtime_ms': ['mean', 'std']
+        }).reset_index()
+        summary_df = pd.DataFrame({
+            'Tasks': agg['Tasks'],
+            'Makespan_Mean': agg['Makespan_s']['mean'],
+            'Makespan_Std': agg['Makespan_s']['std'].fillna(0),
+            'TotalCost_Mean': agg['TotalCost_USD']['mean'],
+            'TotalCost_Std': agg['TotalCost_USD']['std'].fillna(0),
+            'DI_Mean': agg['DI']['mean'],
+            'DI_Std': agg['DI']['std'].fillna(0),
+            'Runtime_Mean': agg['Runtime_ms']['mean'],
+            'Runtime_Std': agg['Runtime_ms']['std'].fillna(0)
+        })
+        summary_df.to_csv(summary_path, index=False)
+        print(f"[EXPORT] Ringkasan metrik dibuat otomatis di: {summary_path}")
+
+
+def plot_evaluation_metrics(df_metrics, out_dir, scenario_title=None, dc_count=None, host_count=None, vm_count=None):
     """
     Grafik 1: 4 Subplot Metrik Evaluasi (Makespan, Total Cost, DI, Runtime)
-    dari skala 1.000 hingga 10.000 tasks dengan pita standar deviasi (error band) dari 3 kali run.
+    dari skala 1.000 hingga 10.000 tasks dengan error band (mean +- std dev).
     """
-    # Agregasi mean dan std dev per skala task
     agg = df_metrics.groupby('Tasks').agg({
         'Makespan_s': ['mean', 'std'],
         'TotalCost_USD': ['mean', 'std'],
@@ -111,21 +143,26 @@ def plot_evaluation_metrics(df_metrics):
     ax4.grid(True, linestyle='--', alpha=0.5)
     ax4.legend(loc='upper left')
 
-    plt.suptitle("Evaluasi Performa Penjadwalan TOPSIS Skala Masif (CloudSim Plus: 2 DC, 8 Host, 80 VM)",
-                 fontsize=13, fontweight='bold', y=0.995)
+    if scenario_title:
+        title_str = f"Evaluasi Performa Penjadwalan TOPSIS Skala Masif ({scenario_title})"
+    elif dc_count is not None and host_count is not None and vm_count is not None:
+        title_str = f"Evaluasi Performa Penjadwalan TOPSIS Skala Masif (CloudSim Plus: {dc_count} DC, {host_count} Host, {vm_count} VM)"
+    else:
+        title_str = "Evaluasi Performa Penjadwalan TOPSIS Skala Masif (CloudSim Plus)"
+
+    plt.suptitle(title_str, fontsize=13, fontweight='bold', y=0.995)
     plt.tight_layout()
 
-    out_path = os.path.join(DOCS_DIR, 'cloudsim_evaluation_metrics.png')
+    out_path = os.path.join(out_dir, 'cloudsim_evaluation_metrics.png')
     plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"[SUCCESS] Grafik evaluasi metrik tersimpan di: {out_path}")
 
 
-def plot_datacenter_host_distribution(df_vm):
+def plot_datacenter_host_distribution(df_vm, out_dir, scenario_title=None):
     """
     Grafik 2: Distribusi total task dan busy time per Physical Host
-    pada Datacenter 1 (Host 0-3) dan Datacenter 2 (Host 4-7),
-    menampilkan beban aktual tanpa mengasumsikan distribusi task merata.
+    mendukung konfigurasi arbitrary Datacenter dan Host secara dinamis.
     """
     host_summary = df_vm.groupby(['DatacenterId', 'HostId']).agg({
         'TaskCount': 'sum',
@@ -136,79 +173,118 @@ def plot_datacenter_host_distribution(df_vm):
     tasks = host_summary['TaskCount'].values
     busy_times = host_summary['BusyTime_s'].values
     dcs = host_summary['DatacenterId'].values
+    unique_dcs = sorted(host_summary['DatacenterId'].unique(), key=lambda x: int(x.split('_')[1]))
 
-    # Pewarnaan berdasar Datacenter
-    colors = ['#1f77b4' if dc == 'DC_1' else '#ff7f0e' for dc in dcs]
+    # Dynamic color mapping for Datacenters
+    palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+    dc_color_map = {dc: palette[i % len(palette)] for i, dc in enumerate(unique_dcs)}
+    colors = [dc_color_map[dc] for dc in dcs]
+
+    total_tasks = int(tasks.sum())
+    total_hosts = len(hosts)
+    ideal_tasks_per_host = total_tasks / total_hosts
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
     # Subplot 1: Total Alokasi Task per Host
     bars1 = ax1.bar(hosts, tasks, color=colors, alpha=0.88, edgecolor='black', linewidth=0.8)
-    ax1.set_title("Distribusi Jumlah Alokasi Task per Physical Host (10.000 Tasks)", fontsize=11, fontweight='bold')
-    ax1.set_xlabel("Physical Host (Host 0-3: Datacenter 1 | Host 4-7: Datacenter 2)")
+    ax1.set_title(f"Distribusi Jumlah Alokasi Task per Physical Host ({total_tasks:,} Tasks)", fontsize=11, fontweight='bold')
+
+    # Construct descriptive x-label
+    dc_desc_parts = []
+    for dc in unique_dcs:
+        dc_num = dc.split('_')[1]
+        dc_hosts = host_summary[host_summary['DatacenterId'] == dc]['HostId'].tolist()
+        dc_desc_parts.append(f"Host {min(dc_hosts)}-{max(dc_hosts)}: DC {dc_num}")
+    ax1.set_xlabel(f"Physical Host ({' | '.join(dc_desc_parts)})")
     ax1.set_ylabel("Total Task Dialokasikan")
+    ax1.set_xticks(hosts)
     ax1.grid(True, linestyle='--', alpha=0.5, axis='y')
-    ax1.axhline(y=10000 / 8, color='crimson', linestyle=':', linewidth=1.5, label='Target Rata-rata Ideal (1.250 task/host)')
+    ax1.axhline(y=ideal_tasks_per_host, color='crimson', linestyle=':', linewidth=1.5,
+                label=f'Target Rata-rata Ideal ({ideal_tasks_per_host:,.0f} task/host)')
 
     for bar in bars1:
         h = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width() / 2.0, h + 25, f"{int(h):,}", ha='center', va='bottom', fontsize=9, fontweight='bold')
+        ax1.text(bar.get_x() + bar.get_width() / 2.0, h + (total_tasks * 0.0025),
+                 f"{int(h):,}", ha='center', va='bottom', fontsize=9, fontweight='bold')
     ax1.legend(loc='lower right')
 
     # Subplot 2: Total Busy Time per Host
     bars2 = ax2.bar(hosts, busy_times, color=colors, alpha=0.88, edgecolor='black', linewidth=0.8)
     ax2.set_title("Akumulasi Durasi Task (Busy Time) per Physical Host", fontsize=11, fontweight='bold')
-    ax2.set_xlabel("Physical Host (Host 0-3: Datacenter 1 | Host 4-7: Datacenter 2)")
+    ax2.set_xlabel(f"Physical Host ({' | '.join(dc_desc_parts)})")
     ax2.set_ylabel("Total Busy Time (detik komputasi)")
+    ax2.set_xticks(hosts)
     ax2.grid(True, linestyle='--', alpha=0.5, axis='y')
 
+    max_busy = max(busy_times) if len(busy_times) > 0 else 1000
     for bar in bars2:
         h = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width() / 2.0, h + 300, f"{int(h):,}s", ha='center', va='bottom', fontsize=8)
+        ax2.text(bar.get_x() + bar.get_width() / 2.0, h + (max_busy * 0.01),
+                 f"{int(h):,}s", ha='center', va='bottom', fontsize=8)
 
-    legend_elements = [
-        Patch(facecolor='#1f77b4', edgecolor='black', label='Datacenter 1 (Host 0, 1, 2, 3 - 40 VM)'),
-        Patch(facecolor='#ff7f0e', edgecolor='black', label='Datacenter 2 (Host 4, 5, 6, 7 - 40 VM)')
-    ]
-    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=True, fontsize=10)
+    # Dynamic Legend
+    legend_elements = []
+    for dc in unique_dcs:
+        dc_num = dc.split('_')[1]
+        dc_hosts = host_summary[host_summary['DatacenterId'] == dc]['HostId'].tolist()
+        dc_vms = len(df_vm[df_vm['DatacenterId'] == dc])
+        hosts_str = ", ".join(str(h) for h in dc_hosts)
+        label_text = f"Datacenter {dc_num} (Host {hosts_str} - {dc_vms} VM)"
+        legend_elements.append(Patch(facecolor=dc_color_map[dc], edgecolor='black', label=label_text))
 
-    plt.suptitle("Distribusi Beban Aktual pada Pemetaan Deterministik CloudSim Plus (10.000 Tasks, Run 3)",
-                 fontsize=12, fontweight='bold', y=1.06)
+    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 1.02),
+               ncol=min(len(unique_dcs), 3), frameon=True, fontsize=10)
+
+    suptitle_text = f"Distribusi Beban Aktual pada Pemetaan Deterministik CloudSim Plus ({total_tasks:,} Tasks)"
+    if scenario_title:
+        suptitle_text += f" - {scenario_title}"
+    plt.suptitle(suptitle_text, fontsize=12, fontweight='bold', y=1.06)
     plt.tight_layout()
 
-    out_path = os.path.join(DOCS_DIR, 'cloudsim_datacenter_host_distribution.png')
+    out_path = os.path.join(out_dir, 'cloudsim_datacenter_host_distribution.png')
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"[SUCCESS] Grafik distribusi Datacenter & Host tersimpan di: {out_path}")
 
 
-def plot_vm_workload_distribution(df_vm):
+def plot_vm_workload_distribution(df_vm, out_dir, scenario_title=None):
     """
-    Grafik 3: Distribusi beban kerja agregat berdasarkan 3 kelas VM (Small, Medium, Large)
-    di seluruh 80 VM pada simulasi skala 10.000 task.
+    Grafik 3: Distribusi beban kerja agregat berdasarkan kelas VM (Small, Medium, Large)
+    secara dinamis menghitung jumlah VM per tipe.
     """
-    # Agregasi per kelas VM
+    type_order = [t for t in ['Small', 'Medium', 'Large'] if t in df_vm['VmType'].values]
+    if not type_order:
+        type_order = sorted(df_vm['VmType'].unique())
+
     type_summary = df_vm.groupby('VmType').agg({
         'TaskCount': ['sum', 'mean'],
         'BusyTime_s': ['sum', 'mean'],
-        'VmId': 'count'
-    }).loc[['Small', 'Medium', 'Large']]
+        'VmId': 'count',
+        'Mips': 'first'
+    }).loc[type_order]
 
-    classes = ['Small\n(32 VM @ 1k MIPS)', 'Medium\n(32 VM @ 2.5k MIPS)', 'Large\n(16 VM @ 5k MIPS)']
-    vm_colors = ['#2b5c8f', '#d95f02', '#2ca02c']
+    vm_counts = {t: int(type_summary.loc[t, ('VmId', 'count')]) for t in type_order}
+    mips_values = {t: float(type_summary.loc[t, ('Mips', 'first')]) for t in type_order}
+
+    classes = [f"{t}\n({vm_counts[t]} VM @ {mips_values[t]/1000:g}k MIPS)" for t in type_order]
+    default_colors = ['#2b5c8f', '#d95f02', '#2ca02c', '#9467bd']
+    vm_colors = default_colors[:len(type_order)]
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    total_tasks = df_vm['TaskCount'].sum()
 
     # 1. Total Task per Kelas
-    total_tasks = type_summary['TaskCount']['sum'].values
-    bars1 = axes[0].bar(classes, total_tasks, color=vm_colors, alpha=0.88, edgecolor='black', linewidth=0.8)
+    total_tasks_per_type = type_summary['TaskCount']['sum'].values
+    bars1 = axes[0].bar(classes, total_tasks_per_type, color=vm_colors, alpha=0.88, edgecolor='black', linewidth=0.8)
     axes[0].set_title("Total Task Dialokasikan per Kelas VM", fontsize=11, fontweight='bold')
     axes[0].set_ylabel("Jumlah Task")
     axes[0].grid(True, linestyle='--', alpha=0.5, axis='y')
     for bar in bars1:
         h = bar.get_height()
-        axes[0].text(bar.get_x() + bar.get_width() / 2.0, h + 50, f"{int(h):,} ({h/10000*100:.1f}%)",
-                     ha='center', va='bottom', fontsize=9, fontweight='bold')
+        pct = (h / total_tasks * 100) if total_tasks > 0 else 0
+        axes[0].text(bar.get_x() + bar.get_width() / 2.0, h + (total_tasks * 0.005),
+                     f"{int(h):,} ({pct:.1f}%)", ha='center', va='bottom', fontsize=9, fontweight='bold')
 
     # 2. Rata-rata Task per Individual VM
     mean_tasks = type_summary['TaskCount']['mean'].values
@@ -216,10 +292,11 @@ def plot_vm_workload_distribution(df_vm):
     axes[1].set_title("Rata-rata Task per Individual VM", fontsize=11, fontweight='bold')
     axes[1].set_ylabel("Rata-rata Task per VM")
     axes[1].grid(True, linestyle='--', alpha=0.5, axis='y')
+    max_mean = max(mean_tasks) if len(mean_tasks) > 0 else 100
     for bar in bars2:
         h = bar.get_height()
-        axes[1].text(bar.get_x() + bar.get_width() / 2.0, h + 2, f"{h:.1f} task/VM",
-                     ha='center', va='bottom', fontsize=9, fontweight='bold')
+        axes[1].text(bar.get_x() + bar.get_width() / 2.0, h + (max_mean * 0.015),
+                     f"{h:.1f} task/VM", ha='center', va='bottom', fontsize=9, fontweight='bold')
 
     # 3. Total Busy Time (detik) per Kelas VM
     total_busy = type_summary['BusyTime_s']['sum'].values
@@ -227,37 +304,52 @@ def plot_vm_workload_distribution(df_vm):
     axes[2].set_title("Akumulasi Durasi Task per Kelas VM", fontsize=11, fontweight='bold')
     axes[2].set_ylabel("Total Busy Time (detik)")
     axes[2].grid(True, linestyle='--', alpha=0.5, axis='y')
+    max_busy = max(total_busy) if len(total_busy) > 0 else 1000
     for bar in bars3:
         h = bar.get_height()
-        axes[2].text(bar.get_x() + bar.get_width() / 2.0, h + 1500, f"{int(h):,}s",
-                     ha='center', va='bottom', fontsize=9, fontweight='bold')
+        axes[2].text(bar.get_x() + bar.get_width() / 2.0, h + (max_busy * 0.015),
+                     f"{int(h):,}s", ha='center', va='bottom', fontsize=9, fontweight='bold')
 
-    plt.suptitle("Analisis Pemanfaatan Kelas Virtual Machine Heterogen (80 VM, 10.000 Tasks GoCJ)",
-                 fontsize=12, fontweight='bold', y=1.03)
+    suptitle_text = f"Analisis Pemanfaatan Kelas Virtual Machine Heterogen ({len(df_vm)} VM, {int(total_tasks):,} Tasks GoCJ)"
+    if scenario_title:
+        suptitle_text += f" - {scenario_title}"
+    plt.suptitle(suptitle_text, fontsize=12, fontweight='bold', y=1.03)
     plt.tight_layout()
 
-    out_path = os.path.join(DOCS_DIR, 'cloudsim_vm_workload_distribution.png')
+    out_path = os.path.join(out_dir, 'cloudsim_vm_workload_distribution.png')
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"[SUCCESS] Grafik pemanfaatan kelas VM tersimpan di: {out_path}")
 
 
 def main():
+    args = parse_args()
+    data_dir = os.path.abspath(args.data_dir)
+    out_dir = os.path.abspath(args.out_dir if args.out_dir else data_dir)
+    os.makedirs(out_dir, exist_ok=True)
+
     print("=========================================================================")
     print("  VISUALISASI HASIL SIMULASI CLOUDSIM PLUS & PENJADWALAN TOPSIS (SOKA 5) ")
-    print("  Dataset: GoCJ 1.000 s/d 10.000 Tasks (3x Repeated Runs)               ")
-    print("  Arsitektur: 2 Datacenter, 8 Physical Hosts, 80 Heterogeneous VMs      ")
+    print(f"  Direktori Data  : {data_dir}")
+    print(f"  Direktori Output: {out_dir}")
+    if args.scenario_title:
+        print(f"  Label Skenario  : {args.scenario_title}")
     print("=========================================================================\n")
 
-    df_metrics = load_metrics_data()
-    df_vm = load_vm_allocation_data()
+    df_metrics = load_metrics_data(data_dir)
+    df_vm = load_vm_allocation_data(data_dir)
 
-    print("\n[PROSES] Membuat 3 grafik publikasi resolusi tinggi...")
-    plot_evaluation_metrics(df_metrics)
-    plot_datacenter_host_distribution(df_vm)
-    plot_vm_workload_distribution(df_vm)
+    export_summary_csv_if_missing(df_metrics, out_dir)
 
-    print("\n[SELESAI] Seluruh 3 grafik telah berhasil dibuat dan disimpan di folder 'docs/'.")
+    dc_count = df_vm['DatacenterId'].nunique()
+    host_count = df_vm['HostId'].nunique()
+    vm_count = len(df_vm)
+
+    plot_evaluation_metrics(df_metrics, out_dir, args.scenario_title, dc_count, host_count, vm_count)
+    plot_datacenter_host_distribution(df_vm, out_dir, args.scenario_title)
+    plot_vm_workload_distribution(df_vm, out_dir, args.scenario_title)
+
+    print(f"\n[SELESAI] Seluruh 3 grafik berhasil disimpan di '{out_dir}'.")
 
 
 if __name__ == "__main__":
