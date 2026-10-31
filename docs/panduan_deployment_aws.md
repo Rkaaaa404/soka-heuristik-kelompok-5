@@ -476,6 +476,23 @@ Di dalam folder output (`results/aws-demo-20/`), dihasilkan 3 artefak utama:
 
 ---
 
+### 8.5 Membuat Grafik Hasil Eksekusi AWS
+Setelah workload AWS berhasil dijalankan, gunakan skrip visualisasi untuk membuat grafik dari tiga file hasil di direktori output. Skrip ini memakai data eksekusi nyata, bukan data simulasi CloudSim:
+
+```powershell
+python python/visualize_real_cloud.py `
+  --data-dir results/aws-demo-20 `
+  --scenario-title "AWS demo - 20 tasks"
+```
+
+Pastikan dependensi pada `python/requirements.txt` sudah terpasang (`pandas` dan `matplotlib`). Grafik akan tersimpan di direktori data:
+
+- `real_evaluation_metrics.png`: durasi eksekusi per task, waktu kedatangan/penyelesaian, biaya model per VM, dan ringkasan metrik.
+- `real_datacenter_host_distribution.png`: jumlah task dan busy time per host.
+- `real_vm_workload_distribution.png`: jumlah task, busy time, dan throughput kalibrasi per VM.
+
+Untuk memakai direktori output grafik terpisah, tambahkan `--out-dir results/aws-demo-20/graphs`.
+
 ## 9. Eksperimen Skala Penuh (1.000 s/d 10.000 Tasks)
 
 Jika tim ingin menjalankan variasi skala lengkap (1.000 s/d 10.000 task dengan 3 repetisi seperti pada simulasi), gunakan skrip otomasi PowerShell berikut.

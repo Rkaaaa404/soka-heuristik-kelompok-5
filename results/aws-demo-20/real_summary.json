@@ -6,8 +6,8 @@
   "tasksCompleted": 20,
   "iterationsPerMi": 10.0,
   "arrivalScale": 0.01,
-  "makespanSeconds": 10.5078586,
+  "makespanSeconds": 5.6810054,
   "modeledCostUsd": 0.1,
-  "degreeOfImbalance": 2.4815322982601358,
-  "schedulerRuntimeMs": 7.2241
+  "degreeOfImbalance": 2.646392421389238,
+  "schedulerRuntimeMs": 4.3001
 }
